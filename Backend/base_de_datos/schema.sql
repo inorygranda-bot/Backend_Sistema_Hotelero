@@ -1,3 +1,9 @@
+-- =============================================================================
+-- ESQUEMA DE BASE DE DATOS: Sistema_Horel
+-- Sistema de Gestión Hotelera - Módulo de Reservas, Tarifas y Facturación
+-- =============================================================================
+
+-- 1. ROLES Y PERMISOS
 CREATE TABLE IF NOT EXISTS "rol" (
 	"id_rol" serial NOT NULL,
 	"nombre" varchar(50) NOT NULL UNIQUE,
@@ -32,6 +38,7 @@ CREATE TABLE IF NOT EXISTS "rol_funcion" (
 	PRIMARY KEY ("id_rol", "id_funcion")
 );
 
+-- 2. USUARIOS Y AUDITORÍA
 CREATE TABLE IF NOT EXISTS "usuario" (
 	"id_usuario" serial NOT NULL,
 	"id_rol" integer NOT NULL,
@@ -42,6 +49,16 @@ CREATE TABLE IF NOT EXISTS "usuario" (
 	PRIMARY KEY ("id_usuario")
 );
 
+CREATE TABLE IF NOT EXISTS "auditoria" (
+	"id_auditoria" serial NOT NULL,
+	"id_usuario" integer NOT NULL,
+	"modulo" varchar(100) NOT NULL,
+	"fecha_hora" timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	"accion" varchar(255) NOT NULL,
+	PRIMARY KEY ("id_auditoria")
+);
+
+-- 3. HUÉSPEDES
 CREATE TABLE IF NOT EXISTS "huesped" (
 	"id_huesped" serial NOT NULL,
 	"tipo_documento" varchar(30) NOT NULL, 
@@ -52,6 +69,13 @@ CREATE TABLE IF NOT EXISTS "huesped" (
 	PRIMARY KEY ("id_huesped")
 );
 
+CREATE TABLE IF NOT EXISTS "documento_huesped" (
+	"id_huesped" integer NOT NULL UNIQUE,
+	"num_documento" varchar(255) NOT NULL UNIQUE,
+	PRIMARY KEY ("id_huesped")
+);
+
+-- 4. HABITACIONES
 CREATE TABLE IF NOT EXISTS "tipo_habitacion" (
 	"id_tipo_habitacion" serial NOT NULL,
 	"nombre_tipo" varchar(100) NOT NULL UNIQUE,
@@ -69,16 +93,28 @@ CREATE TABLE IF NOT EXISTS "habitacion" (
 	PRIMARY KEY ("codigo_habitacion")
 );
 
+-- 5. TARIFAS Y CONFIGURACIÓN COMERCIAL (ACTUALIZADA)
 CREATE TABLE IF NOT EXISTS "tarifa" (
 	"id_tarifa" serial NOT NULL,
 	"nombre_tarifa" varchar(100) NOT NULL,
-	"ocupacion_base" integer NOT NULL,
+	"ocupacion_base" integer NOT NULL DEFAULT 1,
 	"vigente_desde" date NOT NULL,
 	"vigente_hasta" date NOT NULL,
 	"incluye" text NOT NULL,
+	"precio_base" numeric(10,2) NOT NULL DEFAULT 120.00,
+	"estado" varchar(20) NOT NULL DEFAULT 'Activa',
+	"iva" numeric(5,2) NOT NULL DEFAULT 16.00,
+	"huesped_adicional" numeric(10,2) NOT NULL DEFAULT 15.00,
 	PRIMARY KEY ("id_tarifa")
 );
 
+CREATE TABLE IF NOT EXISTS "tarifa_hab" (
+	"id_tarifa" integer NOT NULL, 
+	"id_tipo_hab" integer NOT NULL,
+	PRIMARY KEY ("id_tarifa", "id_tipo_hab")
+);
+
+-- 6. RECARGOS, RESERVAS Y PAGOS
 CREATE TABLE IF NOT EXISTS "recargo" (
 	"id_recargo" serial NOT NULL,
 	"motivo_recargo" varchar(255) NOT NULL,
@@ -121,52 +157,90 @@ CREATE TABLE IF NOT EXISTS "pago" (
 	PRIMARY KEY ("id_pago")
 );
 
-CREATE TABLE IF NOT EXISTS "auditoria" (
-	"id_auditoria" serial NOT NULL,
-	"id_usuario" integer NOT NULL,
-	"modulo" varchar(100) NOT NULL,
-	"fecha_hora" timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	"accion" varchar(255) NOT NULL,
-	PRIMARY KEY ("id_auditoria")
-);
-
-CREATE TABLE IF NOT EXISTS "documento_huesped" (
-	"id_huesped" integer NOT NULL UNIQUE,
-	"num_documento" varchar(255) NOT NULL UNIQUE,
-	PRIMARY KEY ("id_huesped")
-);
-
-CREATE TABLE IF NOT EXISTS "tarifa_hab" (
-	"id_tarifa" integer NOT NULL, 
-	"id_tipo_hab" integer NOT NULL,
-	PRIMARY KEY ("id_tarifa", "id_tipo_hab")
-);
-
--- Relaciones y Llaves Foráneas
+-- =============================================================================
+-- RELACIONES Y LLAVES FORÁNEAS
+-- =============================================================================
+ALTER TABLE "rol_modulo" DROP CONSTRAINT IF EXISTS "rol_modulo_fk0";
 ALTER TABLE "rol_modulo" ADD CONSTRAINT "rol_modulo_fk0" FOREIGN KEY ("id_rol") REFERENCES "rol"("id_rol");
-ALTER TABLE "rol_modulo" ADD CONSTRAINT "rol_modulo_fk1" FOREIGN KEY ("id_modulo") REFERENCES "modulo"("id_modulo");
-ALTER TABLE "funcion" ADD CONSTRAINT "funcion_fk1" FOREIGN KEY ("id_modulo") REFERENCES "modulo"("id_modulo");
-ALTER TABLE "rol_funcion" ADD CONSTRAINT "rol_funcion_fk0" FOREIGN KEY ("id_rol") REFERENCES "rol"("id_rol");
-ALTER TABLE "rol_funcion" ADD CONSTRAINT "rol_funcion_fk1" FOREIGN KEY ("id_funcion") REFERENCES "funcion"("id_funcion");
-ALTER TABLE "usuario" ADD CONSTRAINT "usuario_fk1" FOREIGN KEY ("id_rol") REFERENCES "rol"("id_rol");
-ALTER TABLE "habitacion" ADD CONSTRAINT "habitacion_fk1" FOREIGN KEY ("id_tipo_habitacion") REFERENCES "tipo_habitacion"("id_tipo_habitacion");
-ALTER TABLE "reserva" ADD CONSTRAINT "reserva_fk1" FOREIGN KEY ("id_huesped") REFERENCES "huesped"("id_huesped");
-ALTER TABLE "reserva" ADD CONSTRAINT "reserva_fk2" FOREIGN KEY ("codigo_habitacion") REFERENCES "habitacion"("codigo_habitacion");
-ALTER TABLE "reserva" ADD CONSTRAINT "reserva_fk3" FOREIGN KEY ("id_usuario") REFERENCES "usuario"("id_usuario");
-ALTER TABLE "reserva_recargo" ADD CONSTRAINT "reserva_recargo_fk0" FOREIGN KEY ("codigo_reserva") REFERENCES "reserva"("codigo_reserva");
-ALTER TABLE "reserva_recargo" ADD CONSTRAINT "reserva_recargo_fk1" FOREIGN KEY ("id_recargo") REFERENCES "recargo"("id_recargo");
-ALTER TABLE "pago" ADD CONSTRAINT "pago_fk1" FOREIGN KEY ("codigo_reserva") REFERENCES "reserva"("codigo_reserva");
-ALTER TABLE "pago" ADD CONSTRAINT "pago_fk2" FOREIGN KEY ("id_usuario") REFERENCES "usuario"("id_usuario");
-ALTER TABLE "auditoria" ADD CONSTRAINT "auditoria_fk1" FOREIGN KEY ("id_usuario") REFERENCES "usuario"("id_usuario");
-ALTER TABLE "documento_huesped" ADD CONSTRAINT "documento_huesped_fk0" FOREIGN KEY ("id_huesped") REFERENCES "huesped"("id_huesped");
-ALTER TABLE "tarifa_hab" ADD CONSTRAINT "tarifa_hab_fk0" FOREIGN KEY ("id_tarifa") REFERENCES "tarifa"("id_tarifa");
-ALTER TABLE "tarifa_hab" ADD CONSTRAINT "tarifa_hab_fk1" FOREIGN KEY ("id_tipo_hab") REFERENCES "tipo_habitacion"("id_tipo_habitacion");
 
--- Comentarios
-COMMENT ON COLUMN "habitacion"."amenidades" IS 'artículos, productos de acogida o comodidades adicionales de la habitación que se ofrece de forma gratuita';
-COMMENT ON COLUMN "tarifa"."incluye" IS 'Qué incluye esta tarifa';
-COMMENT ON COLUMN "pago"."id_usuario" IS 'Qué usuario registró el pago';
-COMMENT ON COLUMN "pago"."moneda" IS 'En qué moneda se realizó el pago original';
-COMMENT ON COLUMN "pago"."monto" IS 'monto del pago';
-COMMENT ON TABLE "documento_huesped" IS 'Tabla para separar a quienes tengan o no numeros de documentos';
-COMMENT ON TABLE "tarifa_hab" IS 'Una habitación puede tener varias tarifas según sus condiciones';
+ALTER TABLE "rol_modulo" DROP CONSTRAINT IF EXISTS "rol_modulo_fk1";
+ALTER TABLE "rol_modulo" ADD CONSTRAINT "rol_modulo_fk1" FOREIGN KEY ("id_modulo") REFERENCES "modulo"("id_modulo");
+
+ALTER TABLE "funcion" DROP CONSTRAINT IF EXISTS "funcion_fk1";
+ALTER TABLE "funcion" ADD CONSTRAINT "funcion_fk1" FOREIGN KEY ("id_modulo") REFERENCES "modulo"("id_modulo");
+
+ALTER TABLE "rol_funcion" DROP CONSTRAINT IF EXISTS "rol_funcion_fk0";
+ALTER TABLE "rol_funcion" ADD CONSTRAINT "rol_funcion_fk0" FOREIGN KEY ("id_rol") REFERENCES "rol"("id_rol");
+
+ALTER TABLE "rol_funcion" DROP CONSTRAINT IF EXISTS "rol_funcion_fk1";
+ALTER TABLE "rol_funcion" ADD CONSTRAINT "rol_funcion_fk1" FOREIGN KEY ("id_funcion") REFERENCES "funcion"("id_funcion");
+
+ALTER TABLE "usuario" DROP CONSTRAINT IF EXISTS "usuario_fk1";
+ALTER TABLE "usuario" ADD CONSTRAINT "usuario_fk1" FOREIGN KEY ("id_rol") REFERENCES "rol"("id_rol");
+
+ALTER TABLE "habitacion" DROP CONSTRAINT IF EXISTS "habitacion_fk1";
+ALTER TABLE "habitacion" ADD CONSTRAINT "habitacion_fk1" FOREIGN KEY ("id_tipo_habitacion") REFERENCES "tipo_habitacion"("id_tipo_habitacion");
+
+ALTER TABLE "reserva" DROP CONSTRAINT IF EXISTS "reserva_fk1";
+ALTER TABLE "reserva" ADD CONSTRAINT "reserva_fk1" FOREIGN KEY ("id_huesped") REFERENCES "huesped"("id_huesped");
+
+ALTER TABLE "reserva" DROP CONSTRAINT IF EXISTS "reserva_fk2";
+ALTER TABLE "reserva" ADD CONSTRAINT "reserva_fk2" FOREIGN KEY ("codigo_habitacion") REFERENCES "habitacion"("codigo_habitacion");
+
+ALTER TABLE "reserva" DROP CONSTRAINT IF EXISTS "reserva_fk3";
+ALTER TABLE "reserva" ADD CONSTRAINT "reserva_fk3" FOREIGN KEY ("id_usuario") REFERENCES "usuario"("id_usuario");
+
+ALTER TABLE "reserva_recargo" DROP CONSTRAINT IF EXISTS "reserva_recargo_fk0";
+ALTER TABLE "reserva_recargo" ADD CONSTRAINT "reserva_recargo_fk0" FOREIGN KEY ("codigo_reserva") REFERENCES "reserva"("codigo_reserva");
+
+ALTER TABLE "reserva_recargo" DROP CONSTRAINT IF EXISTS "reserva_recargo_fk1";
+ALTER TABLE "reserva_recargo" ADD CONSTRAINT "reserva_recargo_fk1" FOREIGN KEY ("id_recargo") REFERENCES "recargo"("id_recargo");
+
+ALTER TABLE "pago" DROP CONSTRAINT IF EXISTS "pago_fk1";
+ALTER TABLE "pago" ADD CONSTRAINT "pago_fk1" FOREIGN KEY ("codigo_reserva") REFERENCES "reserva"("codigo_reserva");
+
+ALTER TABLE "pago" DROP CONSTRAINT IF EXISTS "pago_fk2";
+ALTER TABLE "pago" ADD CONSTRAINT "pago_fk2" FOREIGN KEY ("id_usuario") REFERENCES "usuario"("id_usuario");
+
+ALTER TABLE "auditoria" DROP CONSTRAINT IF EXISTS "auditoria_fk1";
+ALTER TABLE "auditoria" ADD CONSTRAINT "auditoria_fk1" FOREIGN KEY ("id_usuario") REFERENCES "usuario"("id_usuario");
+
+ALTER TABLE "documento_huesped" DROP CONSTRAINT IF EXISTS "documento_huesped_fk0";
+ALTER TABLE "documento_huesped" ADD CONSTRAINT "documento_huesped_fk0" FOREIGN KEY ("id_huesped") REFERENCES "huesped"("id_huesped");
+
+ALTER TABLE "tarifa_hab" DROP CONSTRAINT IF EXISTS "tarifa_hab_fk0";
+ALTER TABLE "tarifa_hab" ADD CONSTRAINT "tarifa_hab_fk0" FOREIGN KEY ("id_tarifa") REFERENCES "tarifa"("id_tarifa") ON DELETE CASCADE;
+
+ALTER TABLE "tarifa_hab" DROP CONSTRAINT IF EXISTS "tarifa_hab_fk1";
+ALTER TABLE "tarifa_hab" ADD CONSTRAINT "tarifa_hab_fk1" FOREIGN KEY ("id_tipo_hab") REFERENCES "tipo_habitacion"("id_tipo_habitacion") ON DELETE CASCADE;
+
+-- =============================================================================
+-- COMENTARIOS DESCRIPTIVOS
+-- =============================================================================
+COMMENT ON COLUMN "habitacion"."amenidades" IS 'Artículos, productos de acogida o comodidades adicionales de la habitación que se ofrece de forma gratuita';
+COMMENT ON COLUMN "tarifa"."incluye" IS 'Servicios, condiciones y amenidades incluidas en esta tarifa';
+COMMENT ON COLUMN "tarifa"."precio_base" IS 'Precio base en USD por noche';
+COMMENT ON COLUMN "tarifa"."estado" IS 'Estado comercial de la tarifa (Activa, Inactiva, Borrador)';
+COMMENT ON COLUMN "tarifa"."iva" IS 'Porcentaje de IVA aplicable';
+COMMENT ON COLUMN "tarifa"."huesped_adicional" IS 'Cargo adicional por huésped extra en USD';
+COMMENT ON COLUMN "pago"."id_usuario" IS 'Usuario que registró el pago';
+COMMENT ON COLUMN "pago"."moneda" IS 'Moneda en la que se realizó el pago original';
+COMMENT ON COLUMN "pago"."monto" IS 'Monto del pago';
+COMMENT ON TABLE "documento_huesped" IS 'Tabla para separar a quienes tengan o no números de documentos';
+COMMENT ON TABLE "tarifa_hab" IS 'Relación de tarifas asignadas a cada tipo de habitación';
+
+-- =============================================================================
+-- DATOS INICIALES SEMILLA (SEEDS)
+-- =============================================================================
+-- Tipos de Habitación base
+INSERT INTO "tipo_habitacion" ("id_tipo_habitacion", "nombre_tipo", "descripcion")
+VALUES 
+	(1, 'Suite Ejecutiva', 'Habitación ejecutiva con amenidades de negocios y escritorio'),
+	(2, 'Habitación Estándar', 'Habitación estándar confortable con cama queen y baño privado'),
+	(3, 'Habitación Doble Deluxe', 'Habitación doble superior con balcón y vista a la ciudad'),
+	(4, 'Suite Presidencial', 'Suite de máximo lujo con cava, jacuzzi y mayordomo privado'),
+	(5, 'Suite Junior', 'Suite espaciosa para estadías corporativas prolongadas o parejas')
+ON CONFLICT ("nombre_tipo") DO UPDATE SET "descripcion" = EXCLUDED."descripcion";
+
+-- Sincronizar secuencia de tipo_habitacion
+SELECT setval(pg_get_serial_sequence('tipo_habitacion', 'id_tipo_habitacion'), COALESCE((SELECT MAX(id_tipo_habitacion) FROM tipo_habitacion), 1));
