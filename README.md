@@ -32,7 +32,7 @@ Integrantes:
 
 ### 1. Clonar el repositorio e instalar dependencias
 ```bash
-git clone 
+git clone https://github.com/inorygranda-bot/Backend_Sistema_Hotelero.git
 cd Backend
 npm install
 ```
