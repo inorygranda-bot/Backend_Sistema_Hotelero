@@ -1,24 +1,59 @@
 const conexion = require('../config/conexion');
 
+const eliminarHabitacion = async (peticion, respuesta) => {
+  const { id } = peticion.params;
+
+  try {
+    const consultaSQL = `
+      DELETE FROM habitacion
+      WHERE codigo_habitacion = $1
+      RETURNING *;
+    `;
+
+    const resultado = await conexion.query(consultaSQL, [id]);
+
+    if (resultado.rowCount === 0) {
+      return respuesta.status(404).json({ mensaje: 'La habitación a eliminar no existe.' });
+    }
+
+    return respuesta.status(200).json({
+      mensaje: 'Habitación eliminada correctamente.',
+      habitacion: resultado.rows[0]
+    });
+  } catch (error) {
+    console.error(`Error al eliminar la habitación ID ${id}:`, error);
+
+    // Control de restricción de llave foránea (ej. si tiene reservas asociadas en la BD)[cite: 34]
+    if (error.code === '23503') {
+      return respuesta.status(400).json({
+        mensaje: 'No se puede eliminar la habitación porque tiene reservas o registros asociados.'
+      });
+    }
+
+    return respuesta.status(500).json({ mensaje: 'Error al intentar eliminar la habitación.' });
+  }
+};
+
 const obtenerHabitaciones = async (peticion, respuesta) => {
   try {
     const consultaSQL = `
       SELECT 
-        id_habitacion,
-        numero,
-        piso,
-        tipo,
-        capacidad,
-        amenidades,
-        estado,
-        TO_CHAR(ultima_limpieza, 'DD/MM/YYYY HH24:MI') AS ultima_limpieza,
-        nombre_huesped,
-        TO_CHAR(check_in, 'DD/MM/YYYY') AS check_in,
-        TO_CHAR(check_out, 'DD/MM/YYYY') AS check_out,
-        saldo_usd,
-        saldo_bs
-      FROM habitacion
-      ORDER BY numero ASC;
+        h.codigo_habitacion,
+        h.id_tipo_habitacion,
+        th.nombre_tipo,
+        h.piso,
+        h.capacidad,
+        h.estado,
+        h.amenidades,
+        hu.nombre AS nombre_huesped,
+        TO_CHAR(r.fecha_checkin, 'DD/MM/YYYY') AS fecha_checkin,
+        TO_CHAR(r.fecha_checkout, 'DD/MM/YYYY') AS fecha_checkout,
+        r.monto_pagado
+      FROM habitacion h
+      JOIN tipo_habitacion th ON h.id_tipo_habitacion = th.id_tipo_habitacion
+      LEFT JOIN reserva r ON h.codigo_habitacion = r.codigo_habitacion AND r.estado IN ('PENDIENTE', 'ACTIVA')
+      LEFT JOIN huesped hu ON r.id_huesped = hu.id_huesped
+      ORDER BY h.codigo_habitacion ASC;
     `;
     
     const resultado = await conexion.query(consultaSQL);
@@ -37,21 +72,22 @@ const obtenerHabitacionPorId = async (peticion, respuesta) => {
   try {
     const consultaSQL = `
       SELECT 
-        id_habitacion,
-        numero,
-        piso,
-        tipo,
-        capacidad,
-        amenidades,
-        estado,
-        TO_CHAR(ultima_limpieza, 'DD/MM/YYYY HH24:MI') AS ultima_limpieza,
-        nombre_huesped,
-        TO_CHAR(check_in, 'DD/MM/YYYY') AS check_in,
-        TO_CHAR(check_out, 'DD/MM/YYYY') AS check_out,
-        saldo_usd,
-        saldo_bs
-      FROM habitacion
-      WHERE id_habitacion = $1;
+        h.codigo_habitacion,
+        h.id_tipo_habitacion,
+        th.nombre_tipo,
+        h.piso,
+        h.capacidad,
+        h.estado,
+        h.amenidades,
+        hu.nombre AS nombre_huesped,
+        TO_CHAR(r.fecha_checkin, 'DD/MM/YYYY') AS fecha_checkin,
+        TO_CHAR(r.fecha_checkout, 'DD/MM/YYYY') AS fecha_checkout,
+        r.monto_pagado
+      FROM habitacion h
+      JOIN tipo_habitacion th ON h.id_tipo_habitacion = th.id_tipo_habitacion
+      LEFT JOIN reserva r ON h.codigo_habitacion = r.codigo_habitacion AND r.estado IN ('PENDIENTE', 'ACTIVA')
+      LEFT JOIN huesped hu ON r.id_huesped = hu.id_huesped
+      WHERE h.codigo_habitacion = $1;
     `;
 
     const resultado = await conexion.query(consultaSQL, [id]);
@@ -67,14 +103,95 @@ const obtenerHabitacionPorId = async (peticion, respuesta) => {
   }
 };
 
-const checkinHabitacion = async (peticion, respuesta) => {
-  const { id } = peticion.params;
-  const { nombre_huesped } = peticion.body;
+const crearHabitacion = async (peticion, respuesta) => {
+  const { codigo_habitacion, id_tipo_habitacion, piso, capacidad, estado, amenidades } = peticion.body;
+
+  if (!codigo_habitacion || !id_tipo_habitacion || !piso || !capacidad || !amenidades) {
+    return respuesta.status(400).json({ 
+      mensaje: 'Todos los campos obligatorios de la habitación deben ser completados.' 
+    });
+  }
 
   try {
-    // Verificar que esté Disponible
+    const consultaSQL = `
+      INSERT INTO habitacion (codigo_habitacion, id_tipo_habitacion, piso, capacidad, estado, amenidades)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *;
+    `;
+    const resultado = await conexion.query(consultaSQL, [
+      codigo_habitacion,
+      id_tipo_habitacion,
+      piso.trim(),
+      capacidad,
+      estado || 'Disponible',
+      amenidades.trim()
+    ]);
+
+    return respuesta.status(201).json({
+      mensaje: 'Habitación registrada exitosamente.',
+      habitacion: resultado.rows[0]
+    });
+  } catch (error) {
+    console.error('Error al registrar habitación:', error);
+
+    if (error.code === '23505') {
+      return respuesta.status(400).json({ 
+        mensaje: 'El número o código de habitación ya se encuentra registrado.' 
+      });
+    }
+
+    return respuesta.status(500).json({ 
+      mensaje: 'Error interno al intentar guardar la habitación.' 
+    });
+  }
+};
+
+const actualizarHabitacion = async (peticion, respuesta) => {
+  const { id } = peticion.params;
+  const { id_tipo_habitacion, piso, capacidad, estado, amenidades } = peticion.body;
+
+  if (!id_tipo_habitacion || !piso || !capacidad || !amenidades) {
+    return respuesta.status(400).json({ 
+      mensaje: 'Por favor completa todos los campos requeridos.' 
+    });
+  }
+
+  try {
+    const consultaSQL = `
+      UPDATE habitacion
+      SET id_tipo_habitacion = $1, piso = $2, capacidad = $3, estado = $4, amenidades = $5
+      WHERE codigo_habitacion = $6
+      RETURNING *;
+    `;
+    const resultado = await conexion.query(consultaSQL, [
+      id_tipo_habitacion,
+      piso.trim(),
+      capacidad,
+      estado || 'Disponible',
+      amenidades.trim(),
+      id
+    ]);
+
+    if (resultado.rowCount === 0) {
+      return respuesta.status(404).json({ mensaje: 'La habitación a actualizar no existe.' });
+    }
+
+    return respuesta.status(200).json({ 
+      mensaje: 'Habitación actualizada correctamente.',
+      habitacion: resultado.rows[0]
+    });
+  } catch (error) {
+    console.error(`Error al actualizar la habitación ID ${id}:`, error);
+    return respuesta.status(500).json({ mensaje: 'Error al actualizar la habitación.' });
+  }
+};
+
+const checkinHabitacion = async (peticion, respuesta) => {
+  const { id } = peticion.params;
+
+  try {
     const check = await conexion.query(
-      'SELECT estado FROM habitacion WHERE id_habitacion = $1',
+      'SELECT estado FROM habitacion WHERE codigo_habitacion = $1',
       [id]
     );
 
@@ -90,21 +207,12 @@ const checkinHabitacion = async (peticion, respuesta) => {
 
     const consultaSQL = `
       UPDATE habitacion
-      SET 
-        estado = 'Ocupada',
-        nombre_huesped = $1,
-        check_in = CURRENT_DATE,
-        check_out = CURRENT_DATE + INTERVAL '3 days',
-        saldo_usd = 0,
-        saldo_bs = 0
-      WHERE id_habitacion = $2
+      SET estado = 'Ocupada'
+      WHERE codigo_habitacion = $1
       RETURNING *;
     `;
 
-    const resultado = await conexion.query(consultaSQL, [
-      nombre_huesped || 'Huésped Temporal',
-      id
-    ]);
+    const resultado = await conexion.query(consultaSQL, [id]);
 
     return respuesta.status(200).json({
       mensaje: 'Check-in realizado correctamente.',
@@ -121,7 +229,7 @@ const checkoutHabitacion = async (peticion, respuesta) => {
 
   try {
     const check = await conexion.query(
-      'SELECT estado FROM habitacion WHERE id_habitacion = $1',
+      'SELECT estado FROM habitacion WHERE codigo_habitacion = $1',
       [id]
     );
 
@@ -137,15 +245,8 @@ const checkoutHabitacion = async (peticion, respuesta) => {
 
     const consultaSQL = `
       UPDATE habitacion
-      SET 
-        estado = 'Sucia',
-        nombre_huesped = NULL,
-        check_in = NULL,
-        check_out = NULL,
-        saldo_usd = 0,
-        saldo_bs = 0,
-        ultima_limpieza = CURRENT_TIMESTAMP
-      WHERE id_habitacion = $1
+      SET estado = 'Sucia'
+      WHERE codigo_habitacion = $1
       RETURNING *;
     `;
 
@@ -174,14 +275,8 @@ const cambiarEstadoHabitacion = async (peticion, respuesta) => {
   try {
     const consultaSQL = `
       UPDATE habitacion
-      SET 
-        estado = $1,
-        nombre_huesped = CASE WHEN $1 IN ('Disponible', 'Sucia', 'Fuera de servicio') THEN NULL ELSE nombre_huesped END,
-        check_in = CASE WHEN $1 IN ('Disponible', 'Sucia', 'Fuera de servicio') THEN NULL ELSE check_in END,
-        check_out = CASE WHEN $1 IN ('Disponible', 'Sucia', 'Fuera de servicio') THEN NULL ELSE check_out END,
-        saldo_usd = CASE WHEN $1 IN ('Disponible', 'Sucia', 'Fuera de servicio') THEN 0 ELSE saldo_usd END,
-        saldo_bs = CASE WHEN $1 IN ('Disponible', 'Sucia', 'Fuera de servicio') THEN 0 ELSE saldo_bs END
-      WHERE id_habitacion = $2
+      SET estado = $1
+      WHERE codigo_habitacion = $2
       RETURNING *;
     `;
 
@@ -204,7 +299,10 @@ const cambiarEstadoHabitacion = async (peticion, respuesta) => {
 module.exports = {
   obtenerHabitaciones,
   obtenerHabitacionPorId,
+  crearHabitacion,
+  actualizarHabitacion,
   checkinHabitacion,
   checkoutHabitacion,
-  cambiarEstadoHabitacion
+  cambiarEstadoHabitacion,
+  eliminarHabitacion
 };

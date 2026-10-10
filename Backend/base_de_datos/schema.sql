@@ -229,18 +229,3 @@ COMMENT ON COLUMN "pago"."monto" IS 'Monto del pago';
 COMMENT ON TABLE "documento_huesped" IS 'Tabla para separar a quienes tengan o no números de documentos';
 COMMENT ON TABLE "tarifa_hab" IS 'Relación de tarifas asignadas a cada tipo de habitación';
 
--- =============================================================================
--- DATOS INICIALES SEMILLA (SEEDS)
--- =============================================================================
--- Tipos de Habitación base
-INSERT INTO "tipo_habitacion" ("id_tipo_habitacion", "nombre_tipo", "descripcion")
-VALUES 
-	(1, 'Suite Ejecutiva', 'Habitación ejecutiva con amenidades de negocios y escritorio'),
-	(2, 'Habitación Estándar', 'Habitación estándar confortable con cama queen y baño privado'),
-	(3, 'Habitación Doble Deluxe', 'Habitación doble superior con balcón y vista a la ciudad'),
-	(4, 'Suite Presidencial', 'Suite de máximo lujo con cava, jacuzzi y mayordomo privado'),
-	(5, 'Suite Junior', 'Suite espaciosa para estadías corporativas prolongadas o parejas')
-ON CONFLICT ("nombre_tipo") DO UPDATE SET "descripcion" = EXCLUDED."descripcion";
-
--- Sincronizar secuencia de tipo_habitacion
-SELECT setval(pg_get_serial_sequence('tipo_habitacion', 'id_tipo_habitacion'), COALESCE((SELECT MAX(id_tipo_habitacion) FROM tipo_habitacion), 1));

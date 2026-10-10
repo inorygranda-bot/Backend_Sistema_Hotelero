@@ -6,8 +6,8 @@ require('dotenv').config();
 const rutasHuespedes = require('./rutas/rutas_huespedes');
 const rutasTarifas = require('./rutas/rutas_tarifas');
 const rutasHabitaciones = require('./rutas/rutas_habitaciones');
-// Ejemplo de módulos de compañeros:
-// const rutasReservas = require('./rutas/rutasReservas');
+const tiposHabitacion = require('./rutas/rutas_tipos_habitacion');
+
 
 const aplicacion = express();
 const PUERTO = process.env.PORT || 3000;
@@ -20,7 +20,7 @@ aplicacion.use(express.json());
 aplicacion.use('/api/huespedes', rutasHuespedes);
 aplicacion.use('/api/tarifas', rutasTarifas);
 aplicacion.use('/api/habitaciones', rutasHabitaciones);
-// aplicacion.use('/api/reservas', rutasReservas);
+aplicacion.use('/api/tipos-habitacion', tiposHabitacion);
 
 // Ruta base de prueba
 aplicacion.get('/', (peticion, respuesta) => {
