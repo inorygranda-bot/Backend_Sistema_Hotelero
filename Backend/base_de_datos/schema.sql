@@ -230,3 +230,49 @@ COMMENT ON COLUMN "pago"."monto" IS 'Monto del pago';
 COMMENT ON TABLE "documento_huesped" IS 'Tabla para separar a quienes tengan o no números de documentos';
 COMMENT ON TABLE "tarifa_hab" IS 'Relación de tarifas asignadas a cada tipo de habitación';
 
+-- =============================================================================
+-- 1. SEMILLA DE DATOS: Roles iniciales
+-- =============================================================================
+INSERT INTO "rol" ("id_rol", "nombre", "descripcion") VALUES
+(1, 'Administrador General', 'Acceso total a todos los módulos y funciones del sistema'),
+(2, 'Recepcionista', 'Permisos operativos de recepción, reservas y huéspedes')
+ON CONFLICT ("id_rol") DO NOTHING;
+
+-- =============================================================================
+-- 2. SEMILLA DE DATOS: Módulos (Basados en el menú lateral)
+-- =============================================================================
+INSERT INTO "modulo" ("id_modulo", "nombre_modulo") VALUES
+(1, 'Inicio'),
+(2, 'Reservas'),
+(3, 'Huéspedes'),
+(4, 'Finanzas'),
+(5, 'Habitaciones'),
+(6, 'Tarifas'),
+(7, 'Auditoría'),
+(8, 'Control de emergencias'),
+(9, 'Rol y Usuarios'),
+(10, 'Chat Chavoo')
+ON CONFLICT ("id_modulo") DO NOTHING;
+
+-- =============================================================================
+-- 3. SEMILLA DE DATOS: Funciones principales por cada módulo
+-- =============================================================================
+INSERT INTO "funcion" ("id_funcion", "id_modulo", "nombre_funcion") VALUES
+(1, 1, 'Ver Inicio'),
+(2, 2, 'Gestionar Reservas'),
+(3, 3, 'Gestionar Huéspedes'),
+(4, 4, 'Gestionar Finanzas'),
+(5, 5, 'Gestionar Habitaciones'),
+(6, 6, 'Gestionar Tarifas'),
+(7, 7, 'Ver Auditoría'),
+(8, 8, 'Control de emergencias'),
+(9, 9, 'Gestionar Rol y Usuarios'),
+(10, 10, 'Usar Chat Chavoo')
+ON CONFLICT ("id_funcion") DO NOTHING;
+
+-- =============================================================================
+-- 4. SEMILLA DE DATOS: Usuario Administrador inicial
+-- =============================================================================
+INSERT INTO "usuario" ("id_usuario", "id_rol", "nombre", "correo", "contrasenna", "estado") 
+VALUES (1, 1, 'Administrador General', 'admin@hotel.com', '$2b$10$r9Z4wV1v7...tu_hash_aqui...', 'ACTIVO')
+ON CONFLICT ("id_usuario") DO NOTHING;
