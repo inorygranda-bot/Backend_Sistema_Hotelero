@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS "recargo" (
 	"motivo_recargo" varchar(255) NOT NULL,
 	"tipo_operacion" varchar(20) NOT NULL,
 	"tipo_calculo" varchar(20) NOT NULL,
+	"monto" numeric(10,2) NOT NULL DEFAULT 0.00,
 	PRIMARY KEY ("id_recargo")
 );
 
