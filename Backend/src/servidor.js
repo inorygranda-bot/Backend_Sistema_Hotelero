@@ -8,6 +8,9 @@ const rutasTarifas = require('./rutas/rutas_tarifas');
 const rutasHabitaciones = require('./rutas/rutas_habitaciones');
 const tiposHabitacion = require('./rutas/rutas_tipos_habitacion');
 const rutasRecargos = require('./rutas/rutas_recargos');
+const rutasRoles = require('./rutas/rutas_roles');       
+const rutasUsuarios = require('./rutas/rutas_usuarios');
+const rutasModulos = require('./rutas/rutas_modulos');
 
 
 const aplicacion = express();
@@ -23,6 +26,9 @@ aplicacion.use('/api/tarifas', rutasTarifas);
 aplicacion.use('/api/habitaciones', rutasHabitaciones);
 aplicacion.use('/api/tipos-habitacion', tiposHabitacion);
 aplicacion.use('/api/recargos', rutasRecargos);
+aplicacion.use('/api/roles', rutasRoles);        
+aplicacion.use('/api/usuarios', rutasUsuarios);
+aplicacion.use('/api/modulos', rutasModulos);
 
 // Ruta base de prueba
 aplicacion.get('/', (peticion, respuesta) => {
