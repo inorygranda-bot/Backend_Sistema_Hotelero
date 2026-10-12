@@ -2,10 +2,11 @@
   "name": "backend",
   "version": "1.0.0",
   "description": "API REST para el Sistema de Gestión Hotelera",
-  "main": "src/servidor.js",
+  "main": "src/index.js",
+  "type": "module",
   "scripts": {
-    "dev": "nodemon src/servidor.js",
-    "start": "node src/servidor.js"
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js"
   },
   "keywords": [],
   "author": "",
