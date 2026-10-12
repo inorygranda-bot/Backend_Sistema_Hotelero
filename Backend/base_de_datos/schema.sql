@@ -239,6 +239,46 @@ INSERT INTO "rol" ("id_rol", "nombre", "descripcion") VALUES
 ON CONFLICT ("id_rol") DO NOTHING;
 
 -- =============================================================================
+-- 5. SEMILLA DE DATOS: Permisos de Roles en Módulos (rol_modulo)
+-- =============================================================================
+INSERT INTO "rol_modulo" ("id_rol", "id_modulo", "acceso") VALUES
+(1, 1, 'TOTAL'),
+(1, 2, 'TOTAL'),
+(1, 3, 'TOTAL'),
+(1, 4, 'TOTAL'),
+(1, 5, 'TOTAL'),
+(1, 6, 'TOTAL'),
+(1, 7, 'TOTAL'),
+(1, 8, 'TOTAL'),
+(1, 9, 'TOTAL'),
+(1, 10, 'TOTAL')
+ON CONFLICT ("id_rol", "id_modulo") DO NOTHING;
+
+-- =============================================================================
+-- 6. SEMILLA DE DATOS: Permisos de Roles en Funciones (rol_funcion)
+-- =============================================================================
+INSERT INTO "rol_funcion" ("id_rol", "id_funcion", "acceso") VALUES
+(1, 1, 'TOTAL'),
+(1, 2, 'TOTAL'),
+(1, 3, 'TOTAL'),
+(1, 4, 'TOTAL'),
+(1, 5, 'TOTAL'),
+(1, 6, 'TOTAL'),
+(1, 7, 'TOTAL'),
+(1, 8, 'TOTAL'),
+(1, 9, 'TOTAL'),
+(1, 10, 'TOTAL')
+ON CONFLICT ("id_rol", "id_funcion") DO NOTHING;
+
+-- =============================================================================
+-- 7. Sincronización de Secuencias
+-- =============================================================================
+SELECT pg_catalog.setval('public.rol_id_rol_seq', (SELECT COALESCE(MAX(id_rol), 1) FROM rol), true);
+SELECT pg_catalog.setval('public.modulo_id_modulo_seq', (SELECT COALESCE(MAX(id_modulo), 1) FROM modulo), true);
+SELECT pg_catalog.setval('public.funcion_id_funcion_seq', (SELECT COALESCE(MAX(id_funcion), 1) FROM funcion), true);
+SELECT pg_catalog.setval('public.usuario_id_usuario_seq', (SELECT COALESCE(MAX(id_usuario), 1) FROM usuario), true);
+
+-- =============================================================================
 -- 2. SEMILLA DE DATOS: Módulos (Basados en el menú lateral)
 -- =============================================================================
 INSERT INTO "modulo" ("id_modulo", "nombre_modulo") VALUES
@@ -274,5 +314,5 @@ ON CONFLICT ("id_funcion") DO NOTHING;
 -- 4. SEMILLA DE DATOS: Usuario Administrador inicial
 -- =============================================================================
 INSERT INTO "usuario" ("id_usuario", "id_rol", "nombre", "correo", "contrasenna", "estado") 
-VALUES (1, 1, 'Administrador General', 'admin@hotel.com', '$2b$10$r9Z4wV1v7...tu_hash_aqui...', 'ACTIVO')
+VALUES (1, 1, 'Administrador General', 'admin@hotel.com', '$2b$10$mXakf2ycEOPohLjHb7J21eYbi09EJpof1XtTQfTAb5Y7c7qymTKyu', 'ACTIVO')
 ON CONFLICT ("id_usuario") DO NOTHING;
