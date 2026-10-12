@@ -23,7 +23,6 @@ const eliminarHabitacion = async (peticion, respuesta) => {
   } catch (error) {
     console.error(`Error al eliminar la habitación ID ${id}:`, error);
 
-    // Control de restricción de llave foránea (ej. si tiene reservas asociadas en la BD)[cite: 34]
     if (error.code === '23503') {
       return respuesta.status(400).json({
         mensaje: 'No se puede eliminar la habitación porque tiene reservas o registros asociados.'
@@ -37,7 +36,7 @@ const eliminarHabitacion = async (peticion, respuesta) => {
 const obtenerHabitaciones = async (peticion, respuesta) => {
   try {
     const consultaSQL = `
-      SELECT 
+      SELECT DISTINCT ON (h.codigo_habitacion)
         h.codigo_habitacion,
         h.id_tipo_habitacion,
         th.nombre_tipo,
@@ -45,15 +44,21 @@ const obtenerHabitaciones = async (peticion, respuesta) => {
         h.capacidad,
         h.estado,
         h.amenidades,
+        COALESCE(t.precio_base, 120.00) AS precio_base,
+        COALESCE(t.ocupacion_base, 2) AS ocupacion_base,
+        COALESCE(t.huesped_adicional, 15.00) AS huesped_adicional,
+        COALESCE(t.iva, 16.00) AS iva,
         hu.nombre AS nombre_huesped,
         TO_CHAR(r.fecha_checkin, 'DD/MM/YYYY') AS fecha_checkin,
         TO_CHAR(r.fecha_checkout, 'DD/MM/YYYY') AS fecha_checkout,
         r.monto_pagado
       FROM habitacion h
       JOIN tipo_habitacion th ON h.id_tipo_habitacion = th.id_tipo_habitacion
-      LEFT JOIN reserva r ON h.codigo_habitacion = r.codigo_habitacion AND r.estado IN ('PENDIENTE', 'ACTIVA')
+      LEFT JOIN tarifa_hab thab ON th.id_tipo_habitacion = thab.id_tipo_hab
+      LEFT JOIN tarifa t ON thab.id_tarifa = t.id_tarifa AND t.estado = 'Activa'
+      LEFT JOIN reserva r ON h.codigo_habitacion = r.codigo_habitacion AND r.estado IN ('PENDIENTE', 'CHECKIN', 'CONFIRMADA')
       LEFT JOIN huesped hu ON r.id_huesped = hu.id_huesped
-      ORDER BY h.codigo_habitacion ASC;
+      ORDER BY h.codigo_habitacion ASC, t.id_tarifa DESC;
     `;
     
     const resultado = await conexion.query(consultaSQL);
@@ -71,7 +76,7 @@ const obtenerHabitacionPorId = async (peticion, respuesta) => {
 
   try {
     const consultaSQL = `
-      SELECT 
+      SELECT DISTINCT ON (h.codigo_habitacion)
         h.codigo_habitacion,
         h.id_tipo_habitacion,
         th.nombre_tipo,
@@ -79,15 +84,22 @@ const obtenerHabitacionPorId = async (peticion, respuesta) => {
         h.capacidad,
         h.estado,
         h.amenidades,
+        COALESCE(t.precio_base, 120.00) AS precio_base,
+        COALESCE(t.ocupacion_base, 2) AS ocupacion_base,
+        COALESCE(t.huesped_adicional, 15.00) AS huesped_adicional,
+        COALESCE(t.iva, 16.00) AS iva,
         hu.nombre AS nombre_huesped,
         TO_CHAR(r.fecha_checkin, 'DD/MM/YYYY') AS fecha_checkin,
         TO_CHAR(r.fecha_checkout, 'DD/MM/YYYY') AS fecha_checkout,
         r.monto_pagado
       FROM habitacion h
       JOIN tipo_habitacion th ON h.id_tipo_habitacion = th.id_tipo_habitacion
-      LEFT JOIN reserva r ON h.codigo_habitacion = r.codigo_habitacion AND r.estado IN ('PENDIENTE', 'ACTIVA')
+      LEFT JOIN tarifa_hab thab ON th.id_tipo_habitacion = thab.id_tipo_hab
+      LEFT JOIN tarifa t ON thab.id_tarifa = t.id_tarifa AND t.estado = 'Activa'
+      LEFT JOIN reserva r ON h.codigo_habitacion = r.codigo_habitacion AND r.estado IN ('PENDIENTE', 'CHECKIN', 'CONFIRMADA')
       LEFT JOIN huesped hu ON r.id_huesped = hu.id_huesped
-      WHERE h.codigo_habitacion = $1;
+      WHERE h.codigo_habitacion = $1
+      ORDER BY h.codigo_habitacion ASC, t.id_tarifa DESC;
     `;
 
     const resultado = await conexion.query(consultaSQL, [id]);
