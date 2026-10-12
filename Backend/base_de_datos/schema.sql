@@ -158,6 +158,15 @@ CREATE TABLE IF NOT EXISTS "pago" (
 	PRIMARY KEY ("id_pago")
 );
 
+CREATE TABLE IF NOT EXISTS "emergencia_log" (
+	"id_emergencia" serial NOT NULL,
+	"id_usuario" integer NOT NULL,
+	"fecha_hora_activacion" timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	"estado" varchar(20) NOT NULL DEFAULT 'ALERTA',
+	"mensaje_emitido" text NOT NULL,
+	PRIMARY KEY ("id_emergencia")
+);
+
 -- =============================================================================
 -- RELACIONES Y LLAVES FORÁNEAS
 -- =============================================================================
@@ -214,6 +223,9 @@ ALTER TABLE "tarifa_hab" ADD CONSTRAINT "tarifa_hab_fk0" FOREIGN KEY ("id_tarifa
 
 ALTER TABLE "tarifa_hab" DROP CONSTRAINT IF EXISTS "tarifa_hab_fk1";
 ALTER TABLE "tarifa_hab" ADD CONSTRAINT "tarifa_hab_fk1" FOREIGN KEY ("id_tipo_hab") REFERENCES "tipo_habitacion"("id_tipo_habitacion") ON DELETE CASCADE;
+
+ALTER TABLE "emergencia_log" DROP CONSTRAINT IF EXISTS "emergencia_log_fk0";
+ALTER TABLE "emergencia_log" ADD CONSTRAINT "emergencia_log_fk0" FOREIGN KEY ("id_usuario") REFERENCES "usuario"("id_usuario");
 
 -- =============================================================================
 -- COMENTARIOS DESCRIPTIVOS
@@ -300,6 +312,7 @@ ON CONFLICT ("id_rol", "id_funcion") DO NOTHING;
 -- =============================================================================
 -- 7. Sincronización de Secuencias
 -- =============================================================================
+SELECT pg_catalog.setval('public.emergencia_log_id_emergencia_seq', (SELECT COALESCE(MAX(id_emergencia), 1) FROM emergencia_log), true);
 SELECT pg_catalog.setval('public.rol_id_rol_seq', (SELECT COALESCE(MAX(id_rol), 1) FROM rol), true);
 SELECT pg_catalog.setval('public.modulo_id_modulo_seq', (SELECT COALESCE(MAX(id_modulo), 1) FROM modulo), true);
 SELECT pg_catalog.setval('public.funcion_id_funcion_seq', (SELECT COALESCE(MAX(id_funcion), 1) FROM funcion), true);
