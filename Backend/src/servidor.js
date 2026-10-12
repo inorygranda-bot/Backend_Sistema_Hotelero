@@ -12,6 +12,7 @@ const rutasRoles = require('./rutas/rutas_roles');
 const rutasUsuarios = require('./rutas/rutas_usuarios');
 const rutasModulos = require('./rutas/rutas_modulos');
 const rutasReservas = require('./rutas/rutas_reservas');
+const rutasPagos = require('./rutas/rutas_pagos');
 
 
 const aplicacion = express();
@@ -31,6 +32,7 @@ aplicacion.use('/api/roles', rutasRoles);
 aplicacion.use('/api/usuarios', rutasUsuarios);
 aplicacion.use('/api/modulos', rutasModulos);
 aplicacion.use('/api/reservas', rutasReservas);
+aplicacion.use('/api/pagos', rutasPagos);
 
 // Ruta base de prueba
 aplicacion.get('/', (peticion, respuesta) => {
