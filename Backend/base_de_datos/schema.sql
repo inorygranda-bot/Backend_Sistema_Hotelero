@@ -238,6 +238,33 @@ INSERT INTO "rol" ("id_rol", "nombre", "descripcion") VALUES
 (2, 'Recepcionista', 'Permisos operativos de recepción, reservas y huéspedes')
 ON CONFLICT ("id_rol") DO NOTHING;
 
+
+INSERT INTO "modulo" ("id_modulo", "nombre_modulo") VALUES
+(1, 'Inicio'),
+(2, 'Reservas'),
+(3, 'Huéspedes'),
+(4, 'Finanzas'),
+(5, 'Habitaciones'),
+(6, 'Tarifas'),
+(7, 'Auditoría'),
+(8, 'Control de emergencias'),
+(9, 'Rol y Usuarios'),
+(10, 'Chat Chavoo')
+ON CONFLICT ("id_modulo") DO NOTHING;
+
+INSERT INTO "funcion" ("id_funcion", "id_modulo", "nombre_funcion") VALUES
+(1, 1, 'Ver Inicio'),
+(2, 2, 'Gestionar Reservas'),
+(3, 3, 'Gestionar Huéspedes'),
+(4, 4, 'Gestionar Finanzas'),
+(5, 5, 'Gestionar Habitaciones'),
+(6, 6, 'Gestionar Tarifas'),
+(7, 7, 'Ver Auditoría'),
+(8, 8, 'Control de emergencias'),
+(9, 9, 'Gestionar Rol y Usuarios'),
+(10, 10, 'Usar Chat Chavoo')
+ON CONFLICT ("id_funcion") DO NOTHING;
+
 -- =============================================================================
 -- 5. SEMILLA DE DATOS: Permisos de Roles en Módulos (rol_modulo)
 -- =============================================================================
@@ -277,38 +304,6 @@ SELECT pg_catalog.setval('public.rol_id_rol_seq', (SELECT COALESCE(MAX(id_rol), 
 SELECT pg_catalog.setval('public.modulo_id_modulo_seq', (SELECT COALESCE(MAX(id_modulo), 1) FROM modulo), true);
 SELECT pg_catalog.setval('public.funcion_id_funcion_seq', (SELECT COALESCE(MAX(id_funcion), 1) FROM funcion), true);
 SELECT pg_catalog.setval('public.usuario_id_usuario_seq', (SELECT COALESCE(MAX(id_usuario), 1) FROM usuario), true);
-
--- =============================================================================
--- 2. SEMILLA DE DATOS: Módulos (Basados en el menú lateral)
--- =============================================================================
-INSERT INTO "modulo" ("id_modulo", "nombre_modulo") VALUES
-(1, 'Inicio'),
-(2, 'Reservas'),
-(3, 'Huéspedes'),
-(4, 'Finanzas'),
-(5, 'Habitaciones'),
-(6, 'Tarifas'),
-(7, 'Auditoría'),
-(8, 'Control de emergencias'),
-(9, 'Rol y Usuarios'),
-(10, 'Chat Chavoo')
-ON CONFLICT ("id_modulo") DO NOTHING;
-
--- =============================================================================
--- 3. SEMILLA DE DATOS: Funciones principales por cada módulo
--- =============================================================================
-INSERT INTO "funcion" ("id_funcion", "id_modulo", "nombre_funcion") VALUES
-(1, 1, 'Ver Inicio'),
-(2, 2, 'Gestionar Reservas'),
-(3, 3, 'Gestionar Huéspedes'),
-(4, 4, 'Gestionar Finanzas'),
-(5, 5, 'Gestionar Habitaciones'),
-(6, 6, 'Gestionar Tarifas'),
-(7, 7, 'Ver Auditoría'),
-(8, 8, 'Control de emergencias'),
-(9, 9, 'Gestionar Rol y Usuarios'),
-(10, 10, 'Usar Chat Chavoo')
-ON CONFLICT ("id_funcion") DO NOTHING;
 
 -- =============================================================================
 -- 4. SEMILLA DE DATOS: Usuario Administrador inicial
