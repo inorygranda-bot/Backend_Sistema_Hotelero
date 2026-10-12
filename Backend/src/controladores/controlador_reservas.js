@@ -382,11 +382,17 @@ const cambiarEstadoReserva = async (peticion, respuesta) => {
 const eliminarReserva = async (peticion, respuesta) => {
   const { id } = peticion.params;
   try {
+    
+    await conexion.query('DELETE FROM pago WHERE codigo_reserva = $1;', [id]);
+    
     await conexion.query('DELETE FROM reserva_recargo WHERE codigo_reserva = $1;', [id]);
+    
     const resultado = await conexion.query('DELETE FROM reserva WHERE codigo_reserva = $1 RETURNING *;', [id]);
+    
     if (resultado.rowCount === 0) return respuesta.status(404).json({ mensaje: 'Reserva no encontrada.' });
     return respuesta.status(200).json({ mensaje: 'Reserva eliminada con éxito.' });
   } catch (error) {
+    console.error('Error al eliminar reserva:', error);
     return respuesta.status(500).json({ mensaje: 'Error al eliminar la reserva.' });
   }
 };
