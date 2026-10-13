@@ -1,14 +1,17 @@
 const express = require('express');
-const enrutador = express.Router();
+const router = express.Router();
 const {
   obtenerHuespedesActivosEmergencia,
+  obtenerEstadoEmergencia,
   activarEmergencia,
+  desactivarEmergencia,
   enviarMensajeMasivoAlerta
 } = require('../controladores/controlador_emergencia');
 
-// Definición de Endpoints del Módulo de Control de Emergencia
-enrutador.get('/activos', obtenerHuespedesActivosEmergencia);
-enrutador.post('/activar', activarEmergencia);
-enrutador.post('/mensaje-masivo', enviarMensajeMasivoAlerta);
+router.get('/activos', obtenerHuespedesActivosEmergencia);
+router.get('/estado', obtenerEstadoEmergencia);
+router.post('/activar', activarEmergencia);
+router.post('/desactivar', desactivarEmergencia);
+router.post('/mensaje-masivo', enviarMensajeMasivoAlerta);
 
-module.exports = enrutador;
+module.exports = router;
