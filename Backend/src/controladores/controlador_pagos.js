@@ -1,4 +1,5 @@
 const conexion = require('../config/conexion');
+const { registrarAuditoria } = require('./controlador_auditoria');
 
 // Obtener todos los pagos registrados con detalles de la reserva y huésped
 const obtenerPagos = async (peticion, respuesta) => {
@@ -140,6 +141,9 @@ const crearPago = async (peticion, respuesta) => {
 
     await conexion.query('COMMIT;');
 
+    // ✅ REGISTRAR AUDITORÍA AQUÍ (Cuando ya se tienen todas las variables e inserción exitosa)
+    await registrarAuditoria(id_usuario || 1, 'Finanzas', `Registró pago de ${monto} ${moneda} para la reserva N° ${codigo_reserva}`);
+
     return respuesta.status(201).json({
       mensaje: 'Pago registrado exitosamente y saldo convertido a USD.',
       pago: resultadoPago.rows[0]
@@ -170,11 +174,9 @@ const eliminarPago = async (peticion, respuesta) => {
 
     const { codigo_reserva, monto, moneda } = consultaPago.rows[0];
     
-    // Si se registró en VES, estimamos la reversión usando tasa referencial o estándar, o puedes almacenar la tasa. 
-    // Aquí tomamos el monto directamente si era USD, o aplicamos conversión inversa si es necesario.
     let montoEnUSD = Number(monto);
     if (moneda.toUpperCase() === 'VES') {
-      montoEnUSD = Number(monto) / 872.39; // Tasa base estándar de respaldo para reversión
+      montoEnUSD = Number(monto) / 872.39; 
     }
 
     const resultadoEliminar = await conexion.query('DELETE FROM pago WHERE id_pago = $1 RETURNING *;', [id]);
@@ -185,6 +187,9 @@ const eliminarPago = async (peticion, respuesta) => {
     );
 
     await conexion.query('COMMIT;');
+
+    // ✅ REGISTRAR AUDITORÍA AQUÍ (Cuando el ID y la transacción ya concluyeron)
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Finanzas', `Eliminó el registro de pago ID ${id}`);
 
     return respuesta.status(200).json({
       mensaje: 'Pago eliminado correctamente y saldo de reserva actualizado.',

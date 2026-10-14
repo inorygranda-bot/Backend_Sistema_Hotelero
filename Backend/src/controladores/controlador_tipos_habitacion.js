@@ -1,4 +1,5 @@
 const conexion = require('../config/conexion');
+const { registrarAuditoria } = require('./controlador_auditoria'); // 1. Importar la función aquí arriba
 
 const obtenerTiposHabitacion = async (peticion, respuesta) => {
   try {
@@ -30,6 +31,9 @@ const crearTipoHabitacion = async (peticion, respuesta) => {
     `;
     const resultado = await conexion.query(consultaSQL, [nombre_tipo.trim(), descripcion.trim()]);
     
+    // 2. AQUÍ VA: Cuando se creó exitosamente el tipo de habitación
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Habitaciones', `Registró el tipo de habitación: ${nombre_tipo.trim()}`);
+
     return respuesta.status(201).json({
       mensaje: 'Tipo de habitación registrado exitosamente.',
       tipo: resultado.rows[0]
@@ -64,6 +68,9 @@ const actualizarTipoHabitacion = async (peticion, respuesta) => {
       return respuesta.status(404).json({ mensaje: 'El tipo de habitación no existe.' });
     }
 
+    // 3. AQUÍ VA: Cuando la actualización fue exitosa y verificamos que el ID existe
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Habitaciones', `Actualizó el tipo de habitación ID ${id}`);
+
     return respuesta.status(200).json({
       mensaje: 'Tipo de habitación actualizado correctamente.',
       tipo: resultado.rows[0]
@@ -91,6 +98,9 @@ const eliminarTipoHabitacion = async (peticion, respuesta) => {
     if (resultado.rowCount === 0) {
       return respuesta.status(404).json({ mensaje: 'El tipo de habitación no existe.' });
     }
+
+    // 4. AQUÍ VA: Cuando se eliminó correctamente el registro
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Habitaciones', `Eliminó el tipo de habitación ID ${id}`);
 
     return respuesta.status(200).json({
       mensaje: 'Tipo de habitación eliminado correctamente.',

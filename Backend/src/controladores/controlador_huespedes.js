@@ -1,4 +1,5 @@
 const conexion = require('../config/conexion');
+const { registrarAuditoria } = require('./controlador_auditoria');
 
 const obtenerHuespedes = async (peticion, respuesta) => {
   try {
@@ -97,6 +98,9 @@ const crearHuesped = async (peticion, respuesta) => {
 
     await cliente.query('COMMIT');
 
+    // ✅ REGISTRAR AUDITORÍA AQUÍ (Cuando ya se tienen el nombre y documento definidos y el commit fue exitoso)
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Huéspedes', `Registró al huésped: ${nombre.trim()} (${num_documento.trim()})`);
+
     return respuesta.status(201).json({
       mensaje: 'Huésped registrado exitosamente.',
       id_huesped: idNuevoHuesped
@@ -169,6 +173,9 @@ const actualizarHuesped = async (peticion, respuesta) => {
 
     await cliente.query('COMMIT');
 
+    // ✅ REGISTRAR AUDITORÍA AQUÍ (Cuando 'id' está validado y la transacción concluyó)
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Huéspedes', `Actualizó los datos del huésped ID ${id}`);
+
     return respuesta.status(200).json({ mensaje: 'Huésped actualizado correctamente.' });
   } catch (error) {
     await cliente.query('ROLLBACK');
@@ -206,6 +213,9 @@ const cambiarEstadoHuesped = async (peticion, respuesta) => {
       return respuesta.status(404).json({ mensaje: 'Huésped no encontrado.' });
     }
 
+    // ✅ REGISTRAR AUDITORÍA AQUÍ (Cuando el cambio de estado fue exitoso)
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Huéspedes', `Cambió el estado del huésped ID ${id} a ${estado}`);
+
     return respuesta.status(200).json({ mensaje: `Huésped marcado como ${estado}.` });
   } catch (error) {
     console.error(`Error al cambiar estado del huésped ID ${id}:`, error);
@@ -230,12 +240,15 @@ const eliminarHuesped = async (peticion, respuesta) => {
     }
 
     await cliente.query('COMMIT');
+
+    // ✅ REGISTRAR AUDITORÍA AQUÍ (Cuando la eliminación y el COMMIT se completaron)
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Huéspedes', `Eliminó el huésped ID ${id}`);
+
     return respuesta.status(200).json({ mensaje: 'Huésped eliminado exitosamente.' });
   } catch (error) {
     await cliente.query('ROLLBACK');
     console.error(`Error al eliminar huésped ID ${id}:`, error);
 
-    // Error 23503 = Llave foránea (El huésped está asociado a una reserva existente)
     if (error.code === '23503') {
       return respuesta.status(400).json({ 
         mensaje: 'No se puede eliminar el huésped porque tiene reservas registradas. En su lugar, cámbialo a estado INACTIVO.' 

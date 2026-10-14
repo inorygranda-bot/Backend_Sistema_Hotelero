@@ -1,4 +1,5 @@
 const conexion = require('../config/conexion');
+const { registrarAuditoria } = require('./controlador_auditoria');
 
 const eliminarHabitacion = async (peticion, respuesta) => {
   const { id } = peticion.params;
@@ -15,6 +16,9 @@ const eliminarHabitacion = async (peticion, respuesta) => {
     if (resultado.rowCount === 0) {
       return respuesta.status(404).json({ mensaje: 'La habitación a eliminar no existe.' });
     }
+
+    // ✅ REGISTRAR AUDITORÍA AQUÍ (Cuando el ID está validado y la eliminación fue exitosa)
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Habitaciones', `Eliminó la habitación N° ${id}`);
 
     return respuesta.status(200).json({
       mensaje: 'Habitación eliminada correctamente.',
@@ -139,6 +143,9 @@ const crearHabitacion = async (peticion, respuesta) => {
       amenidades.trim()
     ]);
 
+    // ✅ REGISTRAR AUDITORÍA AQUÍ (Cuando la inserción concluyó con éxito)
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Habitaciones', `Registró la habitación N° ${codigo_habitacion}`);
+
     return respuesta.status(201).json({
       mensaje: 'Habitación registrada exitosamente.',
       habitacion: resultado.rows[0]
@@ -188,6 +195,9 @@ const actualizarHabitacion = async (peticion, respuesta) => {
       return respuesta.status(404).json({ mensaje: 'La habitación a actualizar no existe.' });
     }
 
+    // ✅ REGISTRAR AUDITORÍA AQUÍ (Cuando 'id' está validado y la actualización fue exitosa)
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Habitaciones', `Modificó la habitación N° ${id}`);
+
     return respuesta.status(200).json({ 
       mensaje: 'Habitación actualizada correctamente.',
       habitacion: resultado.rows[0]
@@ -225,6 +235,9 @@ const checkinHabitacion = async (peticion, respuesta) => {
     `;
 
     const resultado = await conexion.query(consultaSQL, [id]);
+
+    // ✅ REGISTRAR AUDITORÍA AQUÍ
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Habitaciones', `Hizo Check-in en la habitación N° ${id}`);
 
     return respuesta.status(200).json({
       mensaje: 'Check-in realizado correctamente.',
@@ -264,6 +277,9 @@ const checkoutHabitacion = async (peticion, respuesta) => {
 
     const resultado = await conexion.query(consultaSQL, [id]);
 
+    // ✅ REGISTRAR AUDITORÍA AQUÍ
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Habitaciones', `Hizo Check-out en la habitación N° ${id}`);
+
     return respuesta.status(200).json({
       mensaje: 'Check-out realizado. La habitación quedó en estado Sucia.',
       habitacion: resultado.rows[0]
@@ -297,6 +313,9 @@ const cambiarEstadoHabitacion = async (peticion, respuesta) => {
     if (resultado.rowCount === 0) {
       return respuesta.status(404).json({ mensaje: 'Habitación no encontrada.' });
     }
+
+    // ✅ REGISTRAR AUDITORÍA AQUÍ
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Habitaciones', `Cambió el estado de la habitación N° ${id} a ${estado}`);
 
     return respuesta.status(200).json({
       mensaje: `Habitación marcada como ${estado}.`,

@@ -1,4 +1,5 @@
 const conexion = require('../config/conexion');
+const { registrarAuditoria } = require('./controlador_auditoria');
 
 // 1. Obtener todas las tarifas con la habitación vinculada
 const obtenerTarifas = async (peticion, respuesta) => {
@@ -152,6 +153,9 @@ const crearTarifa = async (peticion, respuesta) => {
 
     await cliente.query('COMMIT');
 
+    // ✅ REGISTRAR AUDITORÍA AQUÍ (Con ID y nombre ya definidos)
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Tarifas', `Creó la tarifa comercial: ${nombre_tarifa.trim()} (ID ${idNuevaTarifa})`);
+
     return respuesta.status(201).json({
       mensaje: 'Tarifa registrada exitosamente.',
       id_tarifa: idNuevaTarifa
@@ -234,6 +238,9 @@ const actualizarTarifa = async (peticion, respuesta) => {
 
     await cliente.query('COMMIT');
 
+    // ✅ REGISTRAR AUDITORÍA AQUÍ
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Tarifas', `Actualizó la tarifa comercial ID ${id}`);
+
     return respuesta.status(200).json({
       mensaje: 'Tarifa actualizada correctamente.'
     });
@@ -268,6 +275,9 @@ const eliminarTarifa = async (peticion, respuesta) => {
     }
 
     await cliente.query('COMMIT');
+
+    // ✅ REGISTRAR AUDITORÍA AQUÍ
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Tarifas', `Eliminó la tarifa comercial ID ${id}`);
 
     return respuesta.status(200).json({
       mensaje: 'Tarifa eliminada permanentemente del sistema.'
@@ -340,6 +350,9 @@ const duplicarTarifa = async (peticion, respuesta) => {
 
     await cliente.query('COMMIT');
 
+    // ✅ REGISTRAR AUDITORÍA AQUÍ
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Tarifas', `Duplicó la tarifa comercial ID ${id} generando la nueva ID ${nuevaId}`);
+
     return respuesta.status(201).json({
       mensaje: 'Tarifa duplicada correctamente en estado Borrador.',
       id_tarifa: nuevaId
@@ -365,7 +378,6 @@ let cacheTasaBCV = {
 
 const obtenerTasaBCV = async (peticion, respuesta) => {
   const ahora = Date.now();
-  // Cache durante 10 minutos para no saturar la API
   if (ahora - cacheTasaBCV.ultimaConsulta < 10 * 60 * 1000 && cacheTasaBCV.ultimaConsulta > 0) {
     return respuesta.status(200).json(cacheTasaBCV);
   }

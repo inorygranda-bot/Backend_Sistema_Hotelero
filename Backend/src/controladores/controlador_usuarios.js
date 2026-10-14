@@ -1,5 +1,6 @@
 const conexion = require('../config/conexion');
 const bcrypt = require('bcrypt');
+const { registrarAuditoria } = require('./controlador_auditoria');
 
 const obtenerUsuarios = async (peticion, respuesta) => {
   try {
@@ -45,6 +46,7 @@ const obtenerUsuarioPorId = async (peticion, respuesta) => {
 };
 
 const crearUsuario = async (peticion, respuesta) => {
+  
   const { id_rol, nombre, correo, contrasenna, estado } = peticion.body;
 
   if (!id_rol || !nombre || !correo || !contrasenna) {
@@ -69,6 +71,8 @@ const crearUsuario = async (peticion, respuesta) => {
       estado || 'ACTIVO'
     ]);
 
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Rol y Usuarios', `Registró un nuevo usuario: ${nombre}`);
+
     return respuesta.status(201).json({
       mensaje: 'Usuario registrado exitosamente.',
       usuario: resultado.rows[0]
@@ -85,6 +89,7 @@ const crearUsuario = async (peticion, respuesta) => {
 };
 
 const actualizarUsuario = async (peticion, respuesta) => {
+  
   const { id } = peticion.params;
   const { id_rol, nombre, correo, contrasenna, estado } = peticion.body;
 
@@ -124,6 +129,8 @@ const actualizarUsuario = async (peticion, respuesta) => {
       return respuesta.status(404).json({ mensaje: 'El usuario a actualizar no existe.' });
     }
 
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Rol y Usuarios', `Actualizó los datos del usuario ID ${id}`);
+
     return respuesta.status(200).json({
       mensaje: 'Usuario actualizado correctamente.',
       usuario: resultado.rows[0]
@@ -135,6 +142,7 @@ const actualizarUsuario = async (peticion, respuesta) => {
 };
 
 const eliminarUsuario = async (peticion, respuesta) => {
+  
   const { id } = peticion.params;
 
   try {
@@ -148,6 +156,8 @@ const eliminarUsuario = async (peticion, respuesta) => {
     if (resultado.rowCount === 0) {
       return respuesta.status(404).json({ mensaje: 'El usuario a eliminar no existe.' });
     }
+
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Rol y Usuarios', `Eliminó el usuario ID ${id}`);
 
     return respuesta.status(200).json({
       mensaje: 'Usuario eliminado correctamente.',
@@ -165,6 +175,7 @@ const eliminarUsuario = async (peticion, respuesta) => {
 };
 
 const iniciarSesion = async (peticion, respuesta) => {
+  
   const { correo, contrasenna } = peticion.body;
 
   if (!correo || !contrasenna) {
@@ -195,6 +206,7 @@ const iniciarSesion = async (peticion, respuesta) => {
     if (!contrasennaValida) {
       return respuesta.status(401).json({ mensaje: 'Correo o contraseña incorrectos.' });
     }
+    await registrarAuditoria(usuario.id_usuario, 'Rol y Usuarios', `Inicio de sesión exitoso del usuario ${usuario.nombre}`);
 
     // Consultar los IDs de los módulos asignados al rol del usuario
     const consultaModulos = `

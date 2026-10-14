@@ -1,4 +1,5 @@
 const conexion = require('../config/conexion');
+const { registrarAuditoria } = require('./controlador_auditoria'); // 1. Importar la función aquí arriba
 
 const obtenerRoles = async (peticion, respuesta) => {
   try {
@@ -81,6 +82,10 @@ const crearRol = async (peticion, respuesta) => {
     }
 
     await cliente.query('COMMIT');
+
+    // 2. AQUÍ VA: Cuando la transacción de creación finaliza con éxito
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Rol y Usuarios', `Creó el rol: ${nombre.trim()} (ID ${idRol})`);
+
     return respuesta.status(201).json({ mensaje: 'Rol registrado exitosamente con sus permisos.' });
   } catch (error) {
     await cliente.query('ROLLBACK');
@@ -134,6 +139,10 @@ const actualizarRol = async (peticion, respuesta) => {
     }
 
     await cliente.query('COMMIT');
+
+    // 3. AQUÍ VA: Cuando la transacción de actualización finaliza con éxito
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Rol y Usuarios', `Actualizó los permisos y datos del rol ID ${id}`);
+
     return respuesta.status(200).json({ mensaje: 'Rol y permisos actualizados correctamente.' });
   } catch (error) {
     await cliente.query('ROLLBACK');
@@ -159,6 +168,10 @@ const eliminarRol = async (peticion, respuesta) => {
     }
 
     await cliente.query('COMMIT');
+
+    // 4. AQUÍ VA: Cuando la transacción de eliminación finaliza con éxito
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Rol y Usuarios', `Eliminó el rol ID ${id}`);
+
     return respuesta.status(200).json({ mensaje: 'Rol eliminado correctamente.' });
   } catch (error) {
     await cliente.query('ROLLBACK');

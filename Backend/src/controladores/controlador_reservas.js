@@ -1,4 +1,5 @@
 const conexion = require('../config/conexion');
+const { registrarAuditoria } = require('./controlador_auditoria');
 
 const actualizarEstadosAutomaticosPorFecha = async () => {
   try {
@@ -95,7 +96,7 @@ const crearReserva = async (peticion, respuesta) => {
     cantidad_huespedes, 
     estado,
     monto_pagado,
-    recargos_ids // Array de IDs de recargos seleccionados
+    recargos_ids 
   } = peticion.body;
 
   if (!id_huesped || !codigo_habitacion || !fecha_checkin || !fecha_checkout || !cantidad_huespedes) {
@@ -182,7 +183,6 @@ const crearReserva = async (peticion, respuesta) => {
 
     const nuevaReserva = resultado.rows[0];
 
-    // Insertar recargos asociados si existen
     if (Array.isArray(recargos_ids) && recargos_ids.length > 0) {
       for (const idRecargo of recargos_ids) {
         await conexion.query(
@@ -198,6 +198,8 @@ const crearReserva = async (peticion, respuesta) => {
         [codigo_habitacion]
       );
     }
+
+    await registrarAuditoria(id_usuario || 1, 'Reservas', `Creó la reserva N° ${nuevaReserva.codigo_reserva} para la habitación N° ${codigo_habitacion}`);
 
     return respuesta.status(201).json({
       mensaje: 'Reserva registrada exitosamente.',
@@ -302,7 +304,6 @@ const actualizarReserva = async (peticion, respuesta) => {
       return respuesta.status(404).json({ mensaje: 'La reserva a actualizar no existe.' });
     }
 
-    // Actualizar recargos asociados
     await conexion.query('DELETE FROM reserva_recargo WHERE codigo_reserva = $1;', [id]);
     if (Array.isArray(recargos_ids) && recargos_ids.length > 0) {
       for (const idRecargo of recargos_ids) {
@@ -312,6 +313,8 @@ const actualizarReserva = async (peticion, respuesta) => {
         );
       }
     }
+
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Reservas', `Actualizó la reserva ID ${id}`);
 
     return respuesta.status(200).json({ 
       mensaje: 'Reserva actualizada correctamente.',
@@ -373,6 +376,8 @@ const cambiarEstadoReserva = async (peticion, respuesta) => {
     else if (nuevoEstado === 'CHECKOUT') await conexion.query("UPDATE habitacion SET estado = 'Sucia' WHERE codigo_habitacion = $1", [codigoHabitacion]);
     else if (nuevoEstado === 'CANCELADA') await conexion.query("UPDATE habitacion SET estado = 'Disponible' WHERE codigo_habitacion = $1", [codigoHabitacion]);
 
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Reservas', `Cambió el estado de la reserva ID ${id} a ${nuevoEstado}`);
+
     return respuesta.status(200).json({ mensaje: 'Estado actualizado', reserva: resultado.rows[0] });
   } catch (error) {
     return respuesta.status(500).json({ mensaje: 'Error al cambiar estado.' });
@@ -382,16 +387,25 @@ const cambiarEstadoReserva = async (peticion, respuesta) => {
 const eliminarReserva = async (peticion, respuesta) => {
   const { id } = peticion.params;
   try {
+    await conexion.query('BEGIN;');
     
     await conexion.query('DELETE FROM pago WHERE codigo_reserva = $1;', [id]);
-    
     await conexion.query('DELETE FROM reserva_recargo WHERE codigo_reserva = $1;', [id]);
     
     const resultado = await conexion.query('DELETE FROM reserva WHERE codigo_reserva = $1 RETURNING *;', [id]);
     
-    if (resultado.rowCount === 0) return respuesta.status(404).json({ mensaje: 'Reserva no encontrada.' });
+    if (resultado.rowCount === 0) {
+      await conexion.query('ROLLBACK;');
+      return respuesta.status(404).json({ mensaje: 'Reserva no encontrada.' });
+    }
+
+    await conexion.query('COMMIT;');
+
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Reservas', `Eliminó la reserva ID ${id}`);
+
     return respuesta.status(200).json({ mensaje: 'Reserva eliminada con éxito.' });
   } catch (error) {
+    await conexion.query('ROLLBACK;');
     console.error('Error al eliminar reserva:', error);
     return respuesta.status(500).json({ mensaje: 'Error al eliminar la reserva.' });
   }

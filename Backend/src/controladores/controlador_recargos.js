@@ -1,4 +1,5 @@
 const conexion = require('../config/conexion');
+const { registrarAuditoria } = require('./controlador_auditoria');
 
 // Obtener todos los recargos
 const obtenerRecargos = async (peticion, respuesta) => {
@@ -77,9 +78,13 @@ const crearRecargo = async (peticion, respuesta) => {
       monto
     ]);
 
+    const recargoCreado = resultado.rows[0];
+
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Finanzas', `Creó el recargo: ${recargoCreado.motivo_recargo} (ID ${recargoCreado.id_recargo})`);
+
     return respuesta.status(201).json({
       mensaje: 'Recargo registrado exitosamente.',
-      recargo: resultado.rows[0]
+      recargo: recargoCreado
     });
   } catch (error) {
     console.error('Error al registrar el recargo:', error);
@@ -120,6 +125,8 @@ const actualizarRecargo = async (peticion, respuesta) => {
       return respuesta.status(404).json({ mensaje: 'El recargo a actualizar no existe.' });
     }
 
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Finanzas', `Actualizó el recargo ID ${id}`);
+
     return respuesta.status(200).json({ 
       mensaje: 'Recargo actualizado correctamente.',
       recargo: resultado.rows[0]
@@ -146,6 +153,8 @@ const eliminarRecargo = async (peticion, respuesta) => {
     if (resultado.rowCount === 0) {
       return respuesta.status(404).json({ mensaje: 'El recargo a eliminar no existe.' });
     }
+
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Finanzas', `Eliminó el recargo ID ${id}`);
 
     return respuesta.status(200).json({
       mensaje: 'Recargo eliminado correctamente.',

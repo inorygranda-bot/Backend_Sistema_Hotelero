@@ -1,6 +1,7 @@
 const conexion = require('../config/conexion');
 const bcrypt = require('bcrypt');
 const axios = require('axios');
+const { registrarAuditoria } = require('./controlador_auditoria');
 
 // Obtener huéspedes activos (Check-in) de forma segura con LEFT JOIN
 const obtenerHuespedesActivosEmergencia = async (peticion, respuesta) => {
@@ -50,7 +51,6 @@ const obtenerEstadoEmergencia = async (peticion, respuesta) => {
     return respuesta.status(200).json(resultado.rows[0]);
   } catch (error) {
     console.error('Error al obtener estado de emergencia:', error);
-    // Devuelve estado NORMAL por defecto para evitar congelar la interfaz ante cualquier eventualidad
     return respuesta.status(200).json({ estado: 'NORMAL' });
   }
 };
@@ -105,6 +105,9 @@ const activarEmergencia = async (peticion, respuesta) => {
     `;
     const resultadoLog = await conexion.query(consultaLog, [usuarioAccion.id_usuario]);
 
+    // ✅ REGISTRAR AUDITORÍA: Activación de alerta de seguridad
+    await registrarAuditoria(usuarioAccion.id_usuario, 'Control de emergencia', 'Activó la alerta de seguridad del sistema');
+
     return respuesta.status(201).json({
       mensaje: 'Estado de emergencia activado y registrado exitosamente.',
       emergencia: resultadoLog.rows[0]
@@ -130,6 +133,9 @@ const desactivarEmergencia = async (peticion, respuesta) => {
       RETURNING *;
     `;
     const resultadoLog = await conexion.query(consultaLog, [id_usuario]);
+
+    // ✅ REGISTRAR AUDITORÍA: Normalización del sistema
+    await registrarAuditoria(id_usuario, 'Control de emergencia', 'Normalizó el sistema y finalizó los protocolos de emergencia');
 
     return respuesta.status(200).json({
       mensaje: 'Sistema normalizado exitosamente.',
@@ -209,6 +215,9 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
       AND id_emergencia = (SELECT MAX(id_emergencia) FROM emergencia_log WHERE estado = 'ALERTA');
     `;
     await conexion.query(actualizarLogSQL, [mensaje.trim()]);
+
+    // ✅ REGISTRAR AUDITORÍA: Envío de alerta masiva a Telegram
+    await registrarAuditoria(peticion.body.id_usuario || 1, 'Control de emergencia', `Transmitió reporte masivo de emergencia a Telegram (${huespedes.length} huéspedes censados)`);
 
     return respuesta.status(200).json({
       mensaje: `Reporte oficial de emergencia transmitido con éxito al Telegram del Administrador (${huespedes.length} huéspedes censados).`
