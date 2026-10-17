@@ -1,4 +1,5 @@
 const conexion = require('../config/conexion');
+const { registrarAuditoria } = require('./controlador_auditoria');
 
 const obtenerTiposHabitacion = async (peticion, respuesta) => {
   try {
@@ -29,10 +30,19 @@ const crearTipoHabitacion = async (peticion, respuesta) => {
       RETURNING *;
     `;
     const resultado = await conexion.query(consultaSQL, [nombre_tipo.trim(), descripcion.trim()]);
-    
+    const tipoCreado = resultado.rows[0];
+
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || peticion.body.id_admin || 1;
+
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Habitaciones', 
+      `Registró el nuevo tipo de habitación: ${tipoCreado.nombre_tipo} (Descripción: ${tipoCreado.descripcion})`
+    );
+
     return respuesta.status(201).json({
       mensaje: 'Tipo de habitación registrado exitosamente.',
-      tipo: resultado.rows[0]
+      tipo: tipoCreado
     });
   } catch (error) {
     console.error('Error al crear tipo de habitación:', error);
@@ -52,6 +62,17 @@ const actualizarTipoHabitacion = async (peticion, respuesta) => {
   }
 
   try {
+    const consultaPrev = `
+      SELECT * FROM tipo_habitacion WHERE id_tipo_habitacion = $1;
+    `;
+    const resultadoPrev = await conexion.query(consultaPrev, [id]);
+
+    if (resultadoPrev.rows.length === 0) {
+      return respuesta.status(404).json({ mensaje: 'El tipo de habitación no existe.' });
+    }
+
+    const tipoAnterior = resultadoPrev.rows[0];
+
     const consultaSQL = `
       UPDATE tipo_habitacion
       SET nombre_tipo = $1, descripcion = $2
@@ -59,17 +80,33 @@ const actualizarTipoHabitacion = async (peticion, respuesta) => {
       RETURNING *;
     `;
     const resultado = await conexion.query(consultaSQL, [nombre_tipo.trim(), descripcion.trim(), id]);
+    const tipoActualizado = resultado.rows[0];
 
-    if (resultado.rowCount === 0) {
-      return respuesta.status(404).json({ mensaje: 'El tipo de habitación no existe.' });
+    let cambios = [];
+    if (tipoAnterior.nombre_tipo !== nombre_tipo.trim()) {
+      cambios.push(`nombre de "${tipoAnterior.nombre_tipo}" a "${nombre_tipo.trim()}"`);
     }
+    if (tipoAnterior.descripcion !== descripcion.trim()) {
+      cambios.push(`descripción de "${tipoAnterior.descripcion}" a "${descripcion.trim()}"`);
+    }
+
+    const detalleModificacion = cambios.length > 0 ? cambios.join(', ') : 'actualizó los datos sin cambios notables';
+    const descripcionAuditoria = `Actualizó el tipo de habitación ${tipoAnterior.nombre_tipo}: modificó ${detalleModificacion}.`;
+
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || peticion.body.id_admin || 1;
+
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Habitaciones', 
+      descripcionAuditoria
+    );
 
     return respuesta.status(200).json({
       mensaje: 'Tipo de habitación actualizado correctamente.',
-      tipo: resultado.rows[0]
+      tipo: tipoActualizado
     });
   } catch (error) {
-    console.error(`Error al actualizar tipo de habitación ID ${id}:`, error);
+    console.error(`Error al actualizar tipo de habitación:`, error);
     if (error.code === '23505') {
       return respuesta.status(400).json({ mensaje: 'Ya existe otro tipo de habitación con ese nombre.' });
     }
@@ -81,6 +118,9 @@ const eliminarTipoHabitacion = async (peticion, respuesta) => {
   const { id } = peticion.params;
 
   try {
+    const consultaPrev = await conexion.query('SELECT nombre_tipo, descripcion FROM tipo_habitacion WHERE id_tipo_habitacion = $1', [id]);
+    const infoTipo = consultaPrev.rows[0];
+
     const consultaSQL = `
       DELETE FROM tipo_habitacion
       WHERE id_tipo_habitacion = $1
@@ -92,12 +132,22 @@ const eliminarTipoHabitacion = async (peticion, respuesta) => {
       return respuesta.status(404).json({ mensaje: 'El tipo de habitación no existe.' });
     }
 
+    const nombreEliminado = infoTipo ? `${infoTipo.nombre_tipo}` : 'un tipo de habitación';
+    
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || peticion.body.id_admin || 1;
+
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Habitaciones', 
+      `Eliminó permanentemente el tipo de habitación: ${nombreEliminado}`
+    );
+
     return respuesta.status(200).json({
       mensaje: 'Tipo de habitación eliminado correctamente.',
       tipo: resultado.rows[0]
     });
   } catch (error) {
-    console.error(`Error al eliminar tipo de habitación ID ${id}:`, error);
+    console.error(`Error al eliminar tipo de habitación:`, error);
     if (error.code === '23503') {
       return respuesta.status(400).json({
         mensaje: 'No se puede eliminar este tipo porque hay habitaciones asociadas a él.'

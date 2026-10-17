@@ -14,6 +14,7 @@ const rutasModulos = require('./rutas/rutas_modulos');
 const rutasReservas = require('./rutas/rutas_reservas');
 const rutasPagos = require('./rutas/rutas_pagos');
 const rutasEmergencia = require('./rutas/rutas_emergencia');
+const rutasAuditoria = require('./rutas/rutas_auditoria');
 
 
 const aplicacion = express();
@@ -35,6 +36,7 @@ aplicacion.use('/api/modulos', rutasModulos);
 aplicacion.use('/api/reservas', rutasReservas);
 aplicacion.use('/api/pagos', rutasPagos);
 aplicacion.use('/api/emergencia', rutasEmergencia);
+aplicacion.use('/api/auditoria', rutasAuditoria);
 
 // Ruta base de prueba
 aplicacion.get('/', (peticion, respuesta) => {

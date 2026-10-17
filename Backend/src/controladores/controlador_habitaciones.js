@@ -1,37 +1,5 @@
 const conexion = require('../config/conexion');
-
-const eliminarHabitacion = async (peticion, respuesta) => {
-  const { id } = peticion.params;
-
-  try {
-    const consultaSQL = `
-      DELETE FROM habitacion
-      WHERE codigo_habitacion = $1
-      RETURNING *;
-    `;
-
-    const resultado = await conexion.query(consultaSQL, [id]);
-
-    if (resultado.rowCount === 0) {
-      return respuesta.status(404).json({ mensaje: 'La habitación a eliminar no existe.' });
-    }
-
-    return respuesta.status(200).json({
-      mensaje: 'Habitación eliminada correctamente.',
-      habitacion: resultado.rows[0]
-    });
-  } catch (error) {
-    console.error(`Error al eliminar la habitación ID ${id}:`, error);
-
-    if (error.code === '23503') {
-      return respuesta.status(400).json({
-        mensaje: 'No se puede eliminar la habitación porque tiene reservas o registros asociados.'
-      });
-    }
-
-    return respuesta.status(500).json({ mensaje: 'Error al intentar eliminar la habitación.' });
-  }
-};
+const { registrarAuditoria } = require('./controlador_auditoria');
 
 const obtenerHabitaciones = async (peticion, respuesta) => {
   try {
@@ -124,13 +92,17 @@ const crearHabitacion = async (peticion, respuesta) => {
     });
   }
 
+  const cliente = await conexion.connect();
+
   try {
+    await cliente.query('BEGIN');
+
     const consultaSQL = `
       INSERT INTO habitacion (codigo_habitacion, id_tipo_habitacion, piso, capacidad, estado, amenidades)
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *;
     `;
-    const resultado = await conexion.query(consultaSQL, [
+    const resultado = await cliente.query(consultaSQL, [
       codigo_habitacion,
       id_tipo_habitacion,
       piso.trim(),
@@ -139,11 +111,25 @@ const crearHabitacion = async (peticion, respuesta) => {
       amenidades.trim()
     ]);
 
+    const tipoHabRes = await cliente.query('SELECT nombre_tipo FROM tipo_habitacion WHERE id_tipo_habitacion = $1', [id_tipo_habitacion]);
+    const nombreTipo = tipoHabRes.rows[0]?.nombre_tipo || 'Estándar';
+
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+
+    await cliente.query('COMMIT');
+
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Habitaciones', 
+      `Registró la habitación N° ${codigo_habitacion} (Tipo: ${nombreTipo}, Piso: ${piso.trim()}, Capacidad: ${capacidad} personas)`
+    );
+
     return respuesta.status(201).json({
       mensaje: 'Habitación registrada exitosamente.',
       habitacion: resultado.rows[0]
     });
   } catch (error) {
+    await cliente.query('ROLLBACK');
     console.error('Error al registrar habitación:', error);
 
     if (error.code === '23505') {
@@ -155,6 +141,8 @@ const crearHabitacion = async (peticion, respuesta) => {
     return respuesta.status(500).json({ 
       mensaje: 'Error interno al intentar guardar la habitación.' 
     });
+  } finally {
+    cliente.release();
   }
 };
 
@@ -168,14 +156,35 @@ const actualizarHabitacion = async (peticion, respuesta) => {
     });
   }
 
+  const cliente = await conexion.connect();
+
   try {
+    await cliente.query('BEGIN');
+
+    const habAntiguaRes = await cliente.query(`
+      SELECT h.*, th.nombre_tipo 
+      FROM habitacion h
+      JOIN tipo_habitacion th ON h.id_tipo_habitacion = th.id_tipo_habitacion
+      WHERE h.codigo_habitacion = $1
+    `, [id]);
+
+    if (habAntiguaRes.rows.length === 0) {
+      await cliente.query('ROLLBACK');
+      return respuesta.status(404).json({ mensaje: 'La habitación a actualizar no existe.' });
+    }
+
+    const habAntigua = habAntiguaRes.rows[0];
+
+    const tipoHabRes = await cliente.query('SELECT nombre_tipo FROM tipo_habitacion WHERE id_tipo_habitacion = $1', [id_tipo_habitacion]);
+    const nombreTipoNuevo = tipoHabRes.rows[0]?.nombre_tipo || 'Estándar';
+
     const consultaSQL = `
       UPDATE habitacion
       SET id_tipo_habitacion = $1, piso = $2, capacidad = $3, estado = $4, amenidades = $5
       WHERE codigo_habitacion = $6
       RETURNING *;
     `;
-    const resultado = await conexion.query(consultaSQL, [
+    const resultado = await cliente.query(consultaSQL, [
       id_tipo_habitacion,
       piso.trim(),
       capacidad,
@@ -184,34 +193,56 @@ const actualizarHabitacion = async (peticion, respuesta) => {
       id
     ]);
 
-    if (resultado.rowCount === 0) {
-      return respuesta.status(404).json({ mensaje: 'La habitación a actualizar no existe.' });
-    }
+    let cambios = [];
+    if (habAntigua.nombre_tipo !== nombreTipoNuevo) cambios.push(`tipo de "${habAntigua.nombre_tipo}" a "${nombreTipoNuevo}"`);
+    if (String(habAntigua.piso) !== String(piso.trim())) cambios.push(`piso de "${habAntigua.piso}" a "${piso.trim()}"`);
+    if (Number(habAntigua.capacidad) !== Number(capacidad)) cambios.push(`capacidad de ${habAntigua.capacidad} a ${capacidad}`);
+    if (String(habAntigua.estado) !== String(estado || 'Disponible')) cambios.push(`estado de "${habAntigua.estado}" a "${estado || 'Disponible'}"`);
+
+    const detalleCambios = cambios.length > 0 ? cambios.join(', ') : 'actualizó las amenidades o detalles';
+
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+
+    await cliente.query('COMMIT');
+
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Habitaciones', 
+      `Modificó los datos de la habitación N° ${id}: ${detalleCambios}`
+    );
 
     return respuesta.status(200).json({ 
       mensaje: 'Habitación actualizada correctamente.',
       habitacion: resultado.rows[0]
     });
   } catch (error) {
+    await cliente.query('ROLLBACK');
     console.error(`Error al actualizar la habitación ID ${id}:`, error);
     return respuesta.status(500).json({ mensaje: 'Error al actualizar la habitación.' });
+  } finally {
+    cliente.release();
   }
 };
 
 const checkinHabitacion = async (peticion, respuesta) => {
   const { id } = peticion.params;
+  const cliente = await conexion.connect();
 
   try {
-    const check = await conexion.query(
+    await cliente.query('BEGIN');
+
+    const check = await cliente.query(
       'SELECT estado FROM habitacion WHERE codigo_habitacion = $1',
       [id]
     );
 
     if (check.rows.length === 0) {
+      await cliente.query('ROLLBACK');
       return respuesta.status(404).json({ mensaje: 'Habitación no encontrada.' });
     }
 
     if (check.rows[0].estado !== 'Disponible') {
+      await cliente.query('ROLLBACK');
       return respuesta.status(400).json({ 
         mensaje: 'Solo se puede hacer check-in en habitaciones Disponibles.' 
       });
@@ -224,32 +255,50 @@ const checkinHabitacion = async (peticion, respuesta) => {
       RETURNING *;
     `;
 
-    const resultado = await conexion.query(consultaSQL, [id]);
+    const resultado = await cliente.query(consultaSQL, [id]);
+
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+
+    await cliente.query('COMMIT');
+
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Habitaciones', 
+      `Realizó el Check-in (ocupación) en la habitación N° ${id}`
+    );
 
     return respuesta.status(200).json({
       mensaje: 'Check-in realizado correctamente.',
       habitacion: resultado.rows[0]
     });
   } catch (error) {
+    await cliente.query('ROLLBACK');
     console.error(`Error en check-in habitación ID ${id}:`, error);
     return respuesta.status(500).json({ mensaje: 'Error al realizar el check-in.' });
+  } finally {
+    cliente.release();
   }
 };
 
 const checkoutHabitacion = async (peticion, respuesta) => {
   const { id } = peticion.params;
+  const cliente = await conexion.connect();
 
   try {
-    const check = await conexion.query(
+    await cliente.query('BEGIN');
+
+    const check = await cliente.query(
       'SELECT estado FROM habitacion WHERE codigo_habitacion = $1',
       [id]
     );
 
     if (check.rows.length === 0) {
+      await cliente.query('ROLLBACK');
       return respuesta.status(404).json({ mensaje: 'Habitación no encontrada.' });
     }
 
     if (check.rows[0].estado !== 'Ocupada') {
+      await cliente.query('ROLLBACK');
       return respuesta.status(400).json({ 
         mensaje: 'Solo se puede hacer check-out en habitaciones Ocupadas.' 
       });
@@ -262,15 +311,28 @@ const checkoutHabitacion = async (peticion, respuesta) => {
       RETURNING *;
     `;
 
-    const resultado = await conexion.query(consultaSQL, [id]);
+    const resultado = await cliente.query(consultaSQL, [id]);
+
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+
+    await cliente.query('COMMIT');
+
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Habitaciones', 
+      `Realizó el Check-out en la habitación N° ${id} (marcada como Sucia para limpieza)`
+    );
 
     return respuesta.status(200).json({
       mensaje: 'Check-out realizado. La habitación quedó en estado Sucia.',
       habitacion: resultado.rows[0]
     });
   } catch (error) {
+    await cliente.query('ROLLBACK');
     console.error(`Error en check-out habitación ID ${id}:`, error);
     return respuesta.status(500).json({ mensaje: 'Error al realizar el check-out.' });
+  } finally {
+    cliente.release();
   }
 };
 
@@ -284,7 +346,11 @@ const cambiarEstadoHabitacion = async (peticion, respuesta) => {
     return respuesta.status(400).json({ mensaje: 'Estado no válido.' });
   }
 
+  const cliente = await conexion.connect();
+
   try {
+    await cliente.query('BEGIN');
+
     const consultaSQL = `
       UPDATE habitacion
       SET estado = $1
@@ -292,19 +358,83 @@ const cambiarEstadoHabitacion = async (peticion, respuesta) => {
       RETURNING *;
     `;
 
-    const resultado = await conexion.query(consultaSQL, [estado, id]);
+    const resultado = await cliente.query(consultaSQL, [estado, id]);
 
     if (resultado.rowCount === 0) {
+      await cliente.query('ROLLBACK');
       return respuesta.status(404).json({ mensaje: 'Habitación no encontrada.' });
     }
+
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+
+    await cliente.query('COMMIT');
+
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Habitaciones', 
+      `Cambió el estado de la habitación N° ${id} a "${estado}"`
+    );
 
     return respuesta.status(200).json({
       mensaje: `Habitación marcada como ${estado}.`,
       habitacion: resultado.rows[0]
     });
   } catch (error) {
+    await cliente.query('ROLLBACK');
     console.error(`Error al cambiar estado de habitación ID ${id}:`, error);
     return respuesta.status(500).json({ mensaje: 'Error al cambiar el estado de la habitación.' });
+  } finally {
+    cliente.release();
+  }
+};
+
+const eliminarHabitacion = async (peticion, respuesta) => {
+  const { id } = peticion.params;
+  const cliente = await conexion.connect();
+
+  try {
+    await cliente.query('BEGIN');
+
+    const consultaSQL = `
+      DELETE FROM habitacion
+      WHERE codigo_habitacion = $1
+      RETURNING *;
+    `;
+
+    const resultado = await cliente.query(consultaSQL, [id]);
+
+    if (resultado.rowCount === 0) {
+      await cliente.query('ROLLBACK');
+      return respuesta.status(404).json({ mensaje: 'La habitación a eliminar no existe.' });
+    }
+
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+
+    await cliente.query('COMMIT');
+
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Habitaciones', 
+      `Eliminó permanentemente la habitación N° ${id}`
+    );
+
+    return respuesta.status(200).json({
+      mensaje: 'Habitación eliminada correctamente.',
+      habitacion: resultado.rows[0]
+    });
+  } catch (error) {
+    await cliente.query('ROLLBACK');
+    console.error(`Error al eliminar la habitación ID ${id}:`, error);
+
+    if (error.code === '23503') {
+      return respuesta.status(400).json({
+        mensaje: 'No se puede eliminar la habitación porque tiene reservas o registros asociados.'
+      });
+    }
+
+    return respuesta.status(500).json({ mensaje: 'Error al intentar eliminar la habitación.' });
+  } finally {
+    cliente.release();
   }
 };
 
