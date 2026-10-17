@@ -90,7 +90,6 @@ const crearReserva = async (peticion, respuesta) => {
   const { 
     id_huesped, 
     codigo_habitacion, 
-    id_usuario, 
     fecha_checkin, 
     fecha_checkout, 
     cantidad_huespedes, 
@@ -111,24 +110,31 @@ const crearReserva = async (peticion, respuesta) => {
     });
   }
 
+  const cliente = await conexion.connect();
+
   try {
-    const consultaHabitacion = await conexion.query(
+    await cliente.query('BEGIN');
+
+    const consultaHabitacion = await cliente.query(
       'SELECT estado, capacidad FROM habitacion WHERE codigo_habitacion = $1',
       [codigo_habitacion]
     );
 
     if (consultaHabitacion.rows.length === 0) {
+      await cliente.query('ROLLBACK');
       return respuesta.status(404).json({ mensaje: 'La habitación seleccionada no existe.' });
     }
 
     const habInfo = consultaHabitacion.rows[0];
     if (habInfo.estado.toLowerCase() !== 'disponible') {
+      await cliente.query('ROLLBACK');
       return respuesta.status(400).json({
         mensaje: `No se puede reservar. La habitación N° ${codigo_habitacion} se encuentra en estado "${habInfo.estado}".`
       });
     }
 
     if (parseInt(cantidad_huespedes) > parseInt(habInfo.capacidad)) {
+      await cliente.query('ROLLBACK');
       return respuesta.status(400).json({
         mensaje: `La cantidad de huéspedes (${cantidad_huespedes}) supera la capacidad máxima de la habitación (${habInfo.capacidad} personas).`
       });
@@ -142,17 +148,20 @@ const crearReserva = async (peticion, respuesta) => {
         AND fecha_checkout > $2;
     `;
     
-    const resultadoSolapamiento = await conexion.query(consultaSolapamiento, [
+    const resultadoSolapamiento = await cliente.query(consultaSolapamiento, [
       codigo_habitacion,
       fecha_checkin,
       fecha_checkout
     ]);
 
     if (resultadoSolapamiento.rows.length > 0) {
+      await cliente.query('ROLLBACK');
       return respuesta.status(400).json({
         mensaje: `La habitación N° ${codigo_habitacion} ya se encuentra reservada u ocupada en el rango de fechas seleccionado.`
       });
     }
+
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
 
     const consultaSQL = `
       INSERT INTO reserva (
@@ -170,10 +179,10 @@ const crearReserva = async (peticion, respuesta) => {
     `;
     
     const estadoReserva = estado || 'PENDIENTE';
-    const resultado = await conexion.query(consultaSQL, [
+    const resultado = await cliente.query(consultaSQL, [
       id_huesped,
       codigo_habitacion,
-      id_usuario || 1,
+      idUsuarioResponsable,
       fecha_checkin,
       fecha_checkout,
       cantidad_huespedes,
@@ -185,7 +194,7 @@ const crearReserva = async (peticion, respuesta) => {
 
     if (Array.isArray(recargos_ids) && recargos_ids.length > 0) {
       for (const idRecargo of recargos_ids) {
-        await conexion.query(
+        await cliente.query(
           'INSERT INTO reserva_recargo (codigo_reserva, id_recargo) VALUES ($1, $2) ON CONFLICT DO NOTHING;',
           [nuevaReserva.codigo_reserva, idRecargo]
         );
@@ -193,23 +202,35 @@ const crearReserva = async (peticion, respuesta) => {
     }
 
     if (estadoReserva.toUpperCase() === 'CHECKIN') {
-      await conexion.query(
+      await cliente.query(
         "UPDATE habitacion SET estado = 'Ocupada' WHERE codigo_habitacion = $1",
         [codigo_habitacion]
       );
     }
 
-    await registrarAuditoria(id_usuario || 1, 'Reservas', `Creó la reserva N° ${nuevaReserva.codigo_reserva} para la habitación N° ${codigo_habitacion}`);
+    const huespedRes = await cliente.query('SELECT nombre FROM huesped WHERE id_huesped = $1', [id_huesped]);
+    const nombreHuesped = huespedRes.rows[0]?.nombre || 'un huésped';
+
+    await cliente.query('COMMIT');
+
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Reservas', 
+      `Creó la reserva N° ${nuevaReserva.codigo_reserva} para el huésped "${nombreHuesped}" en la habitación N° ${codigo_habitacion}`
+    );
 
     return respuesta.status(201).json({
       mensaje: 'Reserva registrada exitosamente.',
       reserva: nuevaReserva
     });
   } catch (error) {
+    await cliente.query('ROLLBACK');
     console.error('Error al registrar reserva:', error);
     return respuesta.status(500).json({ 
       mensaje: 'Error interno al intentar guardar la reserva.' 
     });
+  } finally {
+    cliente.release();
   }
 };
 
@@ -238,8 +259,26 @@ const actualizarReserva = async (peticion, respuesta) => {
     });
   }
 
+  const cliente = await conexion.connect();
+
   try {
-    const consultaHabitacion = await conexion.query(
+    await cliente.query('BEGIN');
+
+    const reservaAntiguaRes = await cliente.query(`
+      SELECT r.*, h.nombre AS nombre_huesped 
+      FROM reserva r
+      JOIN huesped h ON r.id_huesped = h.id_huesped
+      WHERE r.codigo_reserva = $1;
+    `, [id]);
+
+    if (reservaAntiguaRes.rows.length === 0) {
+      await cliente.query('ROLLBACK');
+      return respuesta.status(404).json({ mensaje: 'La reserva a actualizar no existe.' });
+    }
+
+    const reservaAntigua = reservaAntiguaRes.rows[0];
+
+    const consultaHabitacion = await cliente.query(
       'SELECT capacidad FROM habitacion WHERE codigo_habitacion = $1',
       [codigo_habitacion]
     );
@@ -247,6 +286,7 @@ const actualizarReserva = async (peticion, respuesta) => {
     if (consultaHabitacion.rows.length > 0) {
       const capMax = consultaHabitacion.rows[0].capacidad;
       if (parseInt(cantidad_huespedes) > parseInt(capMax)) {
+        await cliente.query('ROLLBACK');
         return respuesta.status(400).json({
           mensaje: `La cantidad de huéspedes (${cantidad_huespedes}) supera la capacidad máxima de la habitación (${capMax} personas).`
         });
@@ -262,7 +302,7 @@ const actualizarReserva = async (peticion, respuesta) => {
         AND fecha_checkout > $3;
     `;
 
-    const resultadoSolapamiento = await conexion.query(consultaSolapamiento, [
+    const resultadoSolapamiento = await cliente.query(consultaSolapamiento, [
       codigo_habitacion,
       id,
       fecha_checkin,
@@ -270,10 +310,13 @@ const actualizarReserva = async (peticion, respuesta) => {
     ]);
 
     if (resultadoSolapamiento.rows.length > 0) {
+      await cliente.query('ROLLBACK');
       return respuesta.status(400).json({
         mensaje: `La habitación N° ${codigo_habitacion} ya está reservada en esas fechas por otra reserva activa.`
       });
     }
+
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
 
     const consultaSQL = `
       UPDATE reserva
@@ -289,7 +332,7 @@ const actualizarReserva = async (peticion, respuesta) => {
       RETURNING *;
     `;
     
-    const resultado = await conexion.query(consultaSQL, [
+    const resultado = await cliente.query(consultaSQL, [
       id_huesped,
       codigo_habitacion,
       fecha_checkin,
@@ -300,29 +343,44 @@ const actualizarReserva = async (peticion, respuesta) => {
       id
     ]);
 
-    if (resultado.rowCount === 0) {
-      return respuesta.status(404).json({ mensaje: 'La reserva a actualizar no existe.' });
-    }
-
-    await conexion.query('DELETE FROM reserva_recargo WHERE codigo_reserva = $1;', [id]);
+    await cliente.query('DELETE FROM reserva_recargo WHERE codigo_reserva = $1;', [id]);
     if (Array.isArray(recargos_ids) && recargos_ids.length > 0) {
       for (const idRecargo of recargos_ids) {
-        await conexion.query(
+        await cliente.query(
           'INSERT INTO reserva_recargo (codigo_reserva, id_recargo) VALUES ($1, $2) ON CONFLICT DO NOTHING;',
           [id, idRecargo]
         );
       }
     }
 
-    await registrarAuditoria(peticion.body.id_usuario || 1, 'Reservas', `Actualizó la reserva ID ${id}`);
+    const huespedNuevoRes = await cliente.query('SELECT nombre FROM huesped WHERE id_huesped = $1', [id_huesped]);
+    const nombreHuespedNuevo = huespedNuevoRes.rows[0]?.nombre || 'Huésped';
+
+    await cliente.query('COMMIT');
+
+    let cambios = [];
+    if (reservaAntigua.nombre_huesped !== nombreHuespedNuevo) cambios.push(`huésped de "${reservaAntigua.nombre_huesped}" a "${nombreHuespedNuevo}"`);
+    if (Number(reservaAntigua.codigo_habitacion) !== Number(codigo_habitacion)) cambios.push(`habitación de N° ${reservaAntigua.codigo_habitacion} a N° ${codigo_habitacion}`);
+    if (String(reservaAntigua.estado) !== String(estado || 'PENDIENTE')) cambios.push(`estado de "${reservaAntigua.estado}" a "${estado || 'PENDIENTE'}"`);
+
+    const detalleCambios = cambios.length > 0 ? cambios.join(', ') : 'actualizó los detalles de la estancia';
+
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Reservas', 
+      `Actualizó la reserva N° ${id} del huésped "${nombreHuespedNuevo}": ${detalleCambios}`
+    );
 
     return respuesta.status(200).json({ 
       mensaje: 'Reserva actualizada correctamente.',
       reserva: resultado.rows[0]
     });
   } catch (error) {
+    await cliente.query('ROLLBACK');
     console.error(`Error al actualizar la reserva ID ${id}:`, error);
     return respuesta.status(500).json({ mensaje: 'Error al actualizar la reserva.' });
+  } finally {
+    cliente.release();
   }
 };
 
@@ -366,17 +424,28 @@ const cambiarEstadoReserva = async (peticion, respuesta) => {
     return respuesta.status(400).json({ mensaje: 'Estado no válido.' });
   }
   try {
-    const reservaActual = await conexion.query('SELECT codigo_habitacion FROM reserva WHERE codigo_reserva = $1', [id]);
+    const reservaActual = await conexion.query(`
+      SELECT r.codigo_habitacion, h.nombre AS nombre_huesped 
+      FROM reserva r
+      JOIN huesped h ON r.id_huesped = h.id_huesped
+      WHERE r.codigo_reserva = $1
+    `, [id]);
+
     if (reservaActual.rows.length === 0) return respuesta.status(404).json({ mensaje: 'Reserva no encontrada.' });
-    const codigoHabitacion = reservaActual.rows[0].codigo_habitacion;
+    const { codigo_habitacion, nombre_huesped } = reservaActual.rows[0];
     const nuevoEstado = estado.toUpperCase();
     const resultado = await conexion.query('UPDATE reserva SET estado = $1 WHERE codigo_reserva = $2 RETURNING *;', [nuevoEstado, id]);
     
-    if (nuevoEstado === 'CHECKIN') await conexion.query("UPDATE habitacion SET estado = 'Ocupada' WHERE codigo_habitacion = $1", [codigoHabitacion]);
-    else if (nuevoEstado === 'CHECKOUT') await conexion.query("UPDATE habitacion SET estado = 'Sucia' WHERE codigo_habitacion = $1", [codigoHabitacion]);
-    else if (nuevoEstado === 'CANCELADA') await conexion.query("UPDATE habitacion SET estado = 'Disponible' WHERE codigo_habitacion = $1", [codigoHabitacion]);
+    if (nuevoEstado === 'CHECKIN') await conexion.query("UPDATE habitacion SET estado = 'Ocupada' WHERE codigo_habitacion = $1", [codigo_habitacion]);
+    else if (nuevoEstado === 'CHECKOUT') await conexion.query("UPDATE habitacion SET estado = 'Sucia' WHERE codigo_habitacion = $1", [codigo_habitacion]);
+    else if (nuevoEstado === 'CANCELADA') await conexion.query("UPDATE habitacion SET estado = 'Disponible' WHERE codigo_habitacion = $1", [codigo_habitacion]);
 
-    await registrarAuditoria(peticion.body.id_usuario || 1, 'Reservas', `Cambió el estado de la reserva ID ${id} a ${nuevoEstado}`);
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Reservas', 
+      `Cambió el estado de la reserva N° ${id} del huésped "${nombre_huesped}" a ${nuevoEstado}`
+    );
 
     return respuesta.status(200).json({ mensaje: 'Estado actualizado', reserva: resultado.rows[0] });
   } catch (error) {
@@ -389,6 +458,15 @@ const eliminarReserva = async (peticion, respuesta) => {
   try {
     await conexion.query('BEGIN;');
     
+    const reservaInfo = await conexion.query(`
+      SELECT h.nombre AS nombre_huesped 
+      FROM reserva r
+      JOIN huesped h ON r.id_huesped = h.id_huesped
+      WHERE r.codigo_reserva = $1
+    `, [id]);
+
+    const nombreHuesped = reservaInfo.rows[0]?.nombre || 'Huésped';
+
     await conexion.query('DELETE FROM pago WHERE codigo_reserva = $1;', [id]);
     await conexion.query('DELETE FROM reserva_recargo WHERE codigo_reserva = $1;', [id]);
     
@@ -401,7 +479,12 @@ const eliminarReserva = async (peticion, respuesta) => {
 
     await conexion.query('COMMIT;');
 
-    await registrarAuditoria(peticion.body.id_usuario || 1, 'Reservas', `Eliminó la reserva ID ${id}`);
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Reservas', 
+      `Eliminó permanentemente la reserva N° ${id} del huésped "${nombreHuesped}"`
+    );
 
     return respuesta.status(200).json({ mensaje: 'Reserva eliminada con éxito.' });
   } catch (error) {

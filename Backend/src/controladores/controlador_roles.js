@@ -1,5 +1,5 @@
 const conexion = require('../config/conexion');
-const { registrarAuditoria } = require('./controlador_auditoria'); // 1. Importar la función aquí arriba
+const { registrarAuditoria } = require('./controlador_auditoria');
 
 const obtenerRoles = async (peticion, respuesta) => {
   try {
@@ -83,8 +83,12 @@ const crearRol = async (peticion, respuesta) => {
 
     await cliente.query('COMMIT');
 
-    // 2. AQUÍ VA: Cuando la transacción de creación finaliza con éxito
-    await registrarAuditoria(peticion.body.id_usuario || 1, 'Rol y Usuarios', `Creó el rol: ${nombre.trim()} (ID ${idRol})`);
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Rol y Usuarios', 
+      `Creó el rol "${nombre.trim()}" con descripción "${descripcion.trim()}" y ${modulos.length} módulos asignados.`
+    );
 
     return respuesta.status(201).json({ mensaje: 'Rol registrado exitosamente con sus permisos.' });
   } catch (error) {
@@ -108,6 +112,14 @@ const actualizarRol = async (peticion, respuesta) => {
   try {
     await cliente.query('BEGIN');
 
+    // Obtener datos anteriores para auditoría detallada sin IDs
+    const rolAnteriorRes = await cliente.query('SELECT nombre, descripcion FROM rol WHERE id_rol = $1', [id]);
+    if (rolAnteriorRes.rows.length === 0) {
+      await cliente.query('ROLLBACK');
+      return respuesta.status(404).json({ mensaje: 'El rol a actualizar no existe.' });
+    }
+    const rolAnterior = rolAnteriorRes.rows[0];
+
     const updateRol = `
       UPDATE rol
       SET nombre = $1, descripcion = $2
@@ -115,11 +127,6 @@ const actualizarRol = async (peticion, respuesta) => {
       RETURNING id_rol;
     `;
     const resRol = await cliente.query(updateRol, [nombre.trim(), descripcion.trim(), id]);
-
-    if (resRol.rowCount === 0) {
-      await cliente.query('ROLLBACK');
-      return respuesta.status(404).json({ mensaje: 'El rol a actualizar no existe.' });
-    }
 
     await cliente.query('DELETE FROM rol_modulo WHERE id_rol = $1', [id]);
     await cliente.query('DELETE FROM rol_funcion WHERE id_rol = $1', [id]);
@@ -140,8 +147,23 @@ const actualizarRol = async (peticion, respuesta) => {
 
     await cliente.query('COMMIT');
 
-    // 3. AQUÍ VA: Cuando la transacción de actualización finaliza con éxito
-    await registrarAuditoria(peticion.body.id_usuario || 1, 'Rol y Usuarios', `Actualizó los permisos y datos del rol ID ${id}`);
+    let cambios = [];
+    if (rolAnterior.nombre !== nombre.trim()) {
+      cambios.push(`nombre de "${rolAnterior.nombre}" a "${nombre.trim()}"`);
+    }
+    if (rolAnterior.descripcion !== descripcion.trim()) {
+      cambios.push(`descripción modificada`);
+    }
+    cambios.push(`se actualizaron sus módulos y permisos asociados (${modulos.length} módulos)`);
+
+    const detalleModificacion = cambios.join(', ');
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Rol y Usuarios', 
+      `Actualizó el rol "${rolAnterior.nombre}": ${detalleModificacion}.`
+    );
 
     return respuesta.status(200).json({ mensaje: 'Rol y permisos actualizados correctamente.' });
   } catch (error) {
@@ -158,6 +180,10 @@ const eliminarRol = async (peticion, respuesta) => {
   const cliente = await conexion.connect();
   try {
     await cliente.query('BEGIN');
+
+    const rolInfoRes = await cliente.query('SELECT nombre FROM rol WHERE id_rol = $1', [id]);
+    const nombreRolEliminado = rolInfoRes.rows.length > 0 ? rolInfoRes.rows[0].nombre : 'un rol';
+
     await cliente.query('DELETE FROM rol_modulo WHERE id_rol = $1', [id]);
     await cliente.query('DELETE FROM rol_funcion WHERE id_rol = $1', [id]);
     const resRol = await cliente.query('DELETE FROM rol WHERE id_rol = $1 RETURNING *;', [id]);
@@ -169,14 +195,20 @@ const eliminarRol = async (peticion, respuesta) => {
 
     await cliente.query('COMMIT');
 
-    // 4. AQUÍ VA: Cuando la transacción de eliminación finaliza con éxito
-    await registrarAuditoria(peticion.body.id_usuario || 1, 'Rol y Usuarios', `Eliminó el rol ID ${id}`);
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Rol y Usuarios', 
+      `Eliminó permanentemente el rol del sistema "${nombreRolEliminado}".`
+    );
 
     return respuesta.status(200).json({ mensaje: 'Rol eliminado correctamente.' });
   } catch (error) {
     await cliente.query('ROLLBACK');
     console.error(`Error al eliminar el rol ID ${id}:`, error);
     return respuesta.status(500).json({ mensaje: 'Error al intentar eliminar el rol.' });
+  } finally {
+    cliente.release();
   }
 };
 

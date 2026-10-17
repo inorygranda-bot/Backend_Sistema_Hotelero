@@ -3,7 +3,7 @@ const bcrypt = require('bcrypt');
 const axios = require('axios');
 const { registrarAuditoria } = require('./controlador_auditoria');
 
-// Obtener huéspedes activos (Check-in) de forma segura con LEFT JOIN
+// Obtener huéspedes activos (Check-in) con su estado de seguridad si la tabla lo soporta
 const obtenerHuespedesActivosEmergencia = async (peticion, respuesta) => {
   try {
     const consultaSQL = `
@@ -55,7 +55,7 @@ const obtenerEstadoEmergencia = async (peticion, respuesta) => {
   }
 };
 
-// Activar emergencia y validar contraseña de administrador
+// Activar emergencia y registrar usuario responsable
 const activarEmergencia = async (peticion, respuesta) => {
   const { id_usuario, contrasenna_admin } = peticion.body;
 
@@ -65,7 +65,7 @@ const activarEmergencia = async (peticion, respuesta) => {
 
   try {
     const consultaUsuario = `
-      SELECT u.id_usuario, u.contrasenna, r.nombre AS nombre_rol
+      SELECT u.id_usuario, u.nombre, u.contrasenna, r.nombre AS nombre_rol
       FROM usuario u
       JOIN rol r ON u.id_rol = r.id_rol
       WHERE u.id_usuario = $1 AND u.estado = 'ACTIVO';
@@ -88,7 +88,7 @@ const activarEmergencia = async (peticion, respuesta) => {
     const resultadoAdmin = await conexion.query(consultaAdmin);
 
     if (resultadoAdmin.rows.length === 0) {
-      return respuesta.status(500).json({ mensaje: 'No se encontró un administrador activo en el sistema para autorizar la emergencia.' });
+      return respuesta.status(500).json({ mensaje: 'No se encontró un administrador activo en el sistema.' });
     }
 
     const adminSistema = resultadoAdmin.rows[0];
@@ -105,8 +105,12 @@ const activarEmergencia = async (peticion, respuesta) => {
     `;
     const resultadoLog = await conexion.query(consultaLog, [usuarioAccion.id_usuario]);
 
-    // ✅ REGISTRAR AUDITORÍA: Activación de alerta de seguridad
-    await registrarAuditoria(usuarioAccion.id_usuario, 'Control de emergencia', 'Activó la alerta de seguridad del sistema');
+    // ✅ REGISTRAR EN AUDITORÍA CON EL NOMBRE DEL USUARIO
+    await registrarAuditoria(
+      usuarioAccion.id_usuario, 
+      'Control de emergencia', 
+      `El usuario ${usuarioAccion.nombre} activó la alerta de seguridad y evacuación del sistema`
+    );
 
     return respuesta.status(201).json({
       mensaje: 'Estado de emergencia activado y registrado exitosamente.',
@@ -118,7 +122,7 @@ const activarEmergencia = async (peticion, respuesta) => {
   }
 };
 
-// Desactivar emergencia registrando el estado NORMAL en la BD
+// Desactivar emergencia registrando el usuario que normalizó
 const desactivarEmergencia = async (peticion, respuesta) => {
   const { id_usuario } = peticion.body;
 
@@ -127,6 +131,9 @@ const desactivarEmergencia = async (peticion, respuesta) => {
   }
 
   try {
+    const usuarioRes = await conexion.query('SELECT nombre FROM usuario WHERE id_usuario = $1', [id_usuario]);
+    const nombreUsuario = usuarioRes.rows[0]?.nombre || 'Usuario';
+
     const consultaLog = `
       INSERT INTO emergencia_log (id_usuario, estado, mensaje_emitido)
       VALUES ($1, 'NORMAL', 'Sistema normalizado y protocolos finalizados')
@@ -134,8 +141,12 @@ const desactivarEmergencia = async (peticion, respuesta) => {
     `;
     const resultadoLog = await conexion.query(consultaLog, [id_usuario]);
 
-    // ✅ REGISTRAR AUDITORÍA: Normalización del sistema
-    await registrarAuditoria(id_usuario, 'Control de emergencia', 'Normalizó el sistema y finalizó los protocolos de emergencia');
+    // ✅ REGISTRAR EN AUDITORÍA
+    await registrarAuditoria(
+      id_usuario, 
+      'Control de emergencia', 
+      `El usuario ${nombreUsuario} normalizó el sistema y finalizó los protocolos de emergencia`
+    );
 
     return respuesta.status(200).json({
       mensaje: 'Sistema normalizado exitosamente.',
@@ -147,9 +158,9 @@ const desactivarEmergencia = async (peticion, respuesta) => {
   }
 };
 
-// ENVÍO DE REPORTE A TELEGRAM Y ACTUALIZACIÓN DEL MENSAJE EN EL LOG
+// ENVÍO DE REPORTE A TELEGRAM Y REGISTRO DE AUDITORÍA
 const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
-  const { mensaje } = peticion.body;
+  const { mensaje, id_usuario } = peticion.body;
 
   if (!mensaje || !mensaje.trim()) {
     return respuesta.status(400).json({ mensaje: 'El mensaje de alerta no puede estar vacío.' });
@@ -158,6 +169,9 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
   try {
     const tokenBot = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.TELEGRAM_CHAT_ID;
+
+    const usuarioRes = await conexion.query('SELECT nombre FROM usuario WHERE id_usuario = $1', [id_usuario || 1]);
+    const nombreUsuario = usuarioRes.rows[0]?.nombre || 'Administrador';
 
     const consultaSQL = `
       SELECT 
@@ -189,6 +203,7 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
     const textoTelegram = 
       `*[ REPORTE OPERATIVO DE EMERGENCIA ]*\n` +
       `----------------------------------------\n` +
+      `*Emitido por:* ${nombreUsuario}\n` +
       `*Fecha y Hora:* ${fechaHora}\n` +
       `*Estado:* ALERTA DE SEGURIDAD ACTIVADA\n\n` +
       `*Instruccion / Mensaje de Protocolo:*\n` +
@@ -216,15 +231,55 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
     `;
     await conexion.query(actualizarLogSQL, [mensaje.trim()]);
 
-    // ✅ REGISTRAR AUDITORÍA: Envío de alerta masiva a Telegram
-    await registrarAuditoria(peticion.body.id_usuario || 1, 'Control de emergencia', `Transmitió reporte masivo de emergencia a Telegram (${huespedes.length} huéspedes censados)`);
+    // ✅ REGISTRAR EN AUDITORÍA
+    await registrarAuditoria(
+      id_usuario || 1, 
+      'Control de emergencia', 
+      `El usuario ${nombreUsuario} transmitió reporte masivo de emergencia a Telegram (${huespedes.length} huéspedes censados)`
+    );
 
     return respuesta.status(200).json({
-      mensaje: `Reporte oficial de emergencia transmitido con éxito al Telegram del Administrador (${huespedes.length} huéspedes censados).`
+      mensaje: `Reporte oficial transmitido con éxito al Telegram por ${nombreUsuario} (${huespedes.length} huéspedes censados).`
     });
   } catch (error) {
     console.error('Error al enviar reporte por Telegram:', error.response?.data || error.message);
     return respuesta.status(500).json({ mensaje: 'Error al conectar con la API de Telegram.' });
+  }
+};
+
+// ✅ NUEVO ENDPOINT: Registrar en auditoría cuando se marca o desmarca a un huésped como seguro
+const registrarMarcajeHuespedSeguro = async (peticion, respuesta) => {
+  const { id_usuario, id_huesped, seguro } = peticion.body;
+
+  try {
+    const usuarioRes = await conexion.query('SELECT nombre FROM usuario WHERE id_usuario = $1', [id_usuario || 1]);
+    const nombreUsuario = usuarioRes.rows[0]?.nombre || 'Usuario';
+
+    const huespedRes = await conexion.query(`
+      SELECT h.nombre, r.codigo_habitacion 
+      FROM huesped h 
+      JOIN reserva r ON h.id_huesped = r.id_huesped 
+      WHERE h.id_huesped = $1 AND r.estado = 'CHECKIN'
+      LIMIT 1;
+    `, [id_huesped]);
+
+    const nombreHuesped = huespedRes.rows[0]?.nombre || `Huésped ID ${id_huesped}`;
+    const habitacion = huespedRes.rows[0]?.codigo_habitacion || 'S/N';
+
+    const accionTexto = seguro 
+      ? `marcó al huésped "${nombreHuesped}" (Hab. ${habitacion}) como SEGURO/EVACUADO` 
+      : `desmarcó al huésped "${nombreHuesped}" (Hab. ${habitacion}) quedando PENDIENTE`;
+
+    await registrarAuditoria(
+      id_usuario || 1,
+      'Control de emergencia',
+      `El usuario ${nombreUsuario} ${accionTexto}`
+    );
+
+    return respuesta.status(200).json({ mensaje: 'Marcaje registrado en auditoría con éxito.' });
+  } catch (error) {
+    console.error('Error al registrar marcaje de huésped:', error);
+    return respuesta.status(500).json({ mensaje: 'Error al registrar auditoría de huésped.' });
   }
 };
 
@@ -233,5 +288,6 @@ module.exports = {
   obtenerEstadoEmergencia,
   activarEmergencia,
   desactivarEmergencia,
-  enviarMensajeMasivoAlerta
+  enviarMensajeMasivoAlerta,
+  registrarMarcajeHuespedSeguro
 };

@@ -6,7 +6,8 @@ const {
   crearUsuario,
   actualizarUsuario,
   eliminarUsuario,
-  iniciarSesion
+  iniciarSesion,
+  registrarCierreSesion // 👈 Agregado aquí correctamente
 } = require('../controladores/controlador_usuarios');
 
 enrutador.get('/', obtenerUsuarios);
@@ -15,5 +16,6 @@ enrutador.post('/', crearUsuario);
 enrutador.post('/login', iniciarSesion);
 enrutador.put('/:id', actualizarUsuario);
 enrutador.delete('/:id', eliminarUsuario);
+enrutador.post('/logout', registrarCierreSesion);
 
 module.exports = enrutador;

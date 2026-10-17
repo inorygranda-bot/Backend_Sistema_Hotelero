@@ -143,18 +143,28 @@ const crearTarifa = async (peticion, respuesta) => {
     const idNuevaTarifa = resultadoTarifa.rows[0].id_tarifa;
 
     // 2. Vincular con tipo de habitación en tarifa_hab
+    let nombreHabitacion = 'Habitación General';
     if (id_tipo_habitacion) {
       await cliente.query(`
         INSERT INTO tarifa_hab (id_tarifa, id_tipo_hab)
         VALUES ($1, $2)
         ON CONFLICT (id_tarifa, id_tipo_hab) DO NOTHING;
       `, [idNuevaTarifa, parseInt(id_tipo_habitacion)]);
+
+      const tipoHabRes = await cliente.query('SELECT nombre_tipo FROM tipo_habitacion WHERE id_tipo_habitacion = $1', [parseInt(id_tipo_habitacion)]);
+      if (tipoHabRes.rows.length > 0) {
+        nombreHabitacion = tipoHabRes.rows[0].nombre_tipo;
+      }
     }
 
     await cliente.query('COMMIT');
 
-    // ✅ REGISTRAR AUDITORÍA AQUÍ (Con ID y nombre ya definidos)
-    await registrarAuditoria(peticion.body.id_usuario || 1, 'Tarifas', `Creó la tarifa comercial: ${nombre_tarifa.trim()} (ID ${idNuevaTarifa})`);
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+    await registrarAuditoria(
+      idUsuarioResponsable, 
+      'Tarifas', 
+      `Creó la tarifa comercial "${nombre_tarifa.trim()}" asignada a ${nombreHabitacion} con precio base de $${parseFloat(precio_base || 0).toFixed(2)}`
+    );
 
     return respuesta.status(201).json({
       mensaje: 'Tarifa registrada exitosamente.',
@@ -198,7 +208,31 @@ const actualizarTarifa = async (peticion, respuesta) => {
   try {
     await cliente.query('BEGIN');
 
-    // 1. Actualizar tabla tarifa
+    // 1. Obtener datos anteriores para tracking detallado de cambios
+    const tarifaAnteriorRes = await cliente.query(`
+      SELECT t.*, thab.nombre_tipo AS nombre_habitacion 
+      FROM tarifa t
+      LEFT JOIN tarifa_hab th ON t.id_tarifa = th.id_tarifa
+      LEFT JOIN tipo_habitacion thab ON th.id_tipo_hab = thab.id_tipo_habitacion
+      WHERE t.id_tarifa = $1;
+    `, [id]);
+
+    if (tarifaAnteriorRes.rows.length === 0) {
+      await cliente.query('ROLLBACK');
+      return respuesta.status(404).json({ mensaje: 'La tarifa a actualizar no existe.' });
+    }
+
+    const tarifaAnterior = tarifaAnteriorRes.rows[0];
+
+    let nuevaHabitacionNombre = 'Habitación General';
+    if (id_tipo_habitacion) {
+      const tipoHabRes = await cliente.query('SELECT nombre_tipo FROM tipo_habitacion WHERE id_tipo_habitacion = $1', [parseInt(id_tipo_habitacion)]);
+      if (tipoHabRes.rows.length > 0) {
+        nuevaHabitacionNombre = tipoHabRes.rows[0].nombre_tipo;
+      }
+    }
+
+    // 2. Actualizar tabla tarifa
     const consultaUpdate = `
       UPDATE tarifa
       SET 
@@ -227,7 +261,7 @@ const actualizarTarifa = async (peticion, respuesta) => {
       id
     ]);
 
-    // 2. Actualizar relación en tarifa_hab
+    // 3. Actualizar relación en tarifa_hab
     await cliente.query('DELETE FROM tarifa_hab WHERE id_tarifa = $1', [id]);
     if (id_tipo_habitacion) {
       await cliente.query(`
@@ -238,8 +272,32 @@ const actualizarTarifa = async (peticion, respuesta) => {
 
     await cliente.query('COMMIT');
 
-    // ✅ REGISTRAR AUDITORÍA AQUÍ
-    await registrarAuditoria(peticion.body.id_usuario || 1, 'Tarifas', `Actualizó la tarifa comercial ID ${id}`);
+    // Detectar cambios exactamente sin mostrar IDs
+    let cambios = [];
+    if (tarifaAnterior.nombre_tarifa !== nombre_tarifa.trim()) {
+      cambios.push(`nombre de "${tarifaAnterior.nombre_tarifa}" a "${nombre_tarifa.trim()}"`);
+    }
+    if (String(tarifaAnterior.nombre_habitacion || 'Sin asignar') !== String(nuevaHabitacionNombre)) {
+      cambios.push(`habitación asignada de "${tarifaAnterior.nombre_habitacion || 'Sin asignar'}" a "${nuevaHabitacionNombre}"`);
+    }
+    if (parseFloat(tarifaAnterior.precio_base) !== parseFloat(precio_base || 0)) {
+      cambios.push(`precio base de $${parseFloat(tarifaAnterior.precio_base).toFixed(2)} a $${parseFloat(precio_base || 0).toFixed(2)}`);
+    }
+    if (String(tarifaAnterior.estado) !== String(estado || 'Activa')) {
+      cambios.push(`estado de "${tarifaAnterior.estado}" a "${estado || 'Activa'}"`);
+    }
+    if (parseInt(tarifaAnterior.ocupacion_base) !== parseInt(ocupacion_base || 2)) {
+      cambios.push(`ocupación base de ${tarifaAnterior.ocupacion_base} a ${ocupacion_base || 2}`);
+    }
+    if (parseFloat(tarifaAnterior.huesped_adicional) !== parseFloat(huesped_adicional || 0)) {
+      cambios.push(`huésped adicional de $${parseFloat(tarifaAnterior.huesped_adicional).toFixed(2)} a $${parseFloat(huesped_adicional || 0).toFixed(2)}`);
+    }
+
+    const detalleModificacion = cambios.length > 0 ? cambios.join(', ') : 'actualizó los datos sin cambios notables';
+    const descripcionAuditoria = `Actualizó la tarifa comercial "${tarifaAnterior.nombre_tarifa}": modificó ${detalleModificacion}.`;
+
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+    await registrarAuditoria(idUsuarioResponsable, 'Tarifas', descripcionAuditoria);
 
     return respuesta.status(200).json({
       mensaje: 'Tarifa actualizada correctamente.'
@@ -263,6 +321,19 @@ const eliminarTarifa = async (peticion, respuesta) => {
   try {
     await cliente.query('BEGIN');
 
+    // Obtener información comercial antes de eliminar para el log
+    const tarifaInfoRes = await cliente.query(`
+      SELECT t.nombre_tarifa, thab.nombre_tipo AS nombre_habitacion
+      FROM tarifa t
+      LEFT JOIN tarifa_hab th ON t.id_tarifa = th.id_tarifa
+      LEFT JOIN tipo_habitacion thab ON th.id_tipo_hab = thab.id_tipo_habitacion
+      WHERE t.id_tarifa = $1;
+    `, [id]);
+
+    const tarifaInfo = tarifaInfoRes.rows[0];
+    const nombreTarifaEliminada = tarifaInfo ? tarifaInfo.nombre_tarifa : 'una tarifa';
+    const habitacionAsociada = tarifaInfo?.nombre_habitacion ? ` de la habitación ${tarifaInfo.nombre_habitacion}` : '';
+
     // 1. Eliminar referencias en tarifa_hab
     await cliente.query('DELETE FROM tarifa_hab WHERE id_tarifa = $1', [id]);
 
@@ -276,8 +347,8 @@ const eliminarTarifa = async (peticion, respuesta) => {
 
     await cliente.query('COMMIT');
 
-    // ✅ REGISTRAR AUDITORÍA AQUÍ
-    await registrarAuditoria(peticion.body.id_usuario || 1, 'Tarifas', `Eliminó la tarifa comercial ID ${id}`);
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+    await registrarAuditoria(idUsuarioResponsable, 'Tarifas', `Eliminó permanentemente la tarifa comercial "${nombreTarifaEliminada}"${habitacionAsociada}`);
 
     return respuesta.status(200).json({
       mensaje: 'Tarifa eliminada permanentemente del sistema.'
@@ -350,8 +421,8 @@ const duplicarTarifa = async (peticion, respuesta) => {
 
     await cliente.query('COMMIT');
 
-    // ✅ REGISTRAR AUDITORÍA AQUÍ
-    await registrarAuditoria(peticion.body.id_usuario || 1, 'Tarifas', `Duplicó la tarifa comercial ID ${id} generando la nueva ID ${nuevaId}`);
+    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+    await registrarAuditoria(idUsuarioResponsable, 'Tarifas', `Duplicó la tarifa comercial "${orig.nombre_tarifa}" generando la nueva tarifa "${nuevoNombre}" en estado Borrador`);
 
     return respuesta.status(201).json({
       mensaje: 'Tarifa duplicada correctamente en estado Borrador.',
