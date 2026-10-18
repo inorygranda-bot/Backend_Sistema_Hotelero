@@ -1,7 +1,7 @@
 const conexion = require('../config/conexion');
 const { registrarAuditoria } = require('./controlador_auditoria');
 
-// 1. Obtener todas las tarifas con la habitación vinculada
+// 1. Obtener todas las tarifas con su temporada y habitación vinculada
 const obtenerTarifas = async (peticion, respuesta) => {
   try {
     const consultaSQL = `
@@ -9,16 +9,21 @@ const obtenerTarifas = async (peticion, respuesta) => {
         t.id_tarifa,
         t.nombre_tarifa,
         t.ocupacion_base,
-        TO_CHAR(t.vigente_desde, 'YYYY-MM-DD') AS vigente_desde,
-        TO_CHAR(t.vigente_hasta, 'YYYY-MM-DD') AS vigente_hasta,
         t.incluye,
         COALESCE(t.precio_base, 0) AS precio_base,
         COALESCE(t.estado, 'Activa') AS estado,
         COALESCE(t.iva, 16) AS iva,
         COALESCE(t.huesped_adicional, 0) AS huesped_adicional,
+        tp.id_temporada,
+        tp.nombre_temporada,
+        tp.dia_inicio,
+        tp.mes_inicio,
+        tp.dia_fin,
+        tp.mes_fin,
         thab.id_tipo_habitacion,
         COALESCE(thab.nombre_tipo, 'Sin asignar') AS nombre_habitacion
       FROM tarifa t
+      JOIN temporada tp ON t.id_temporada = tp.id_temporada
       LEFT JOIN tarifa_hab th ON t.id_tarifa = th.id_tarifa
       LEFT JOIN tipo_habitacion thab ON th.id_tipo_hab = thab.id_tipo_habitacion
       ORDER BY t.id_tarifa ASC;
@@ -44,16 +49,21 @@ const obtenerTarifaPorId = async (peticion, respuesta) => {
         t.id_tarifa,
         t.nombre_tarifa,
         t.ocupacion_base,
-        TO_CHAR(t.vigente_desde, 'YYYY-MM-DD') AS vigente_desde,
-        TO_CHAR(t.vigente_hasta, 'YYYY-MM-DD') AS vigente_hasta,
         t.incluye,
         COALESCE(t.precio_base, 0) AS precio_base,
         COALESCE(t.estado, 'Activa') AS estado,
         COALESCE(t.iva, 16) AS iva,
         COALESCE(t.huesped_adicional, 0) AS huesped_adicional,
+        tp.id_temporada,
+        tp.nombre_temporada,
+        tp.dia_inicio,
+        tp.mes_inicio,
+        tp.dia_fin,
+        tp.mes_fin,
         thab.id_tipo_habitacion,
         COALESCE(thab.nombre_tipo, 'Sin asignar') AS nombre_habitacion
       FROM tarifa t
+      JOIN temporada tp ON t.id_temporada = tp.id_temporada
       LEFT JOIN tarifa_hab th ON t.id_tarifa = th.id_tarifa
       LEFT JOIN tipo_habitacion thab ON th.id_tipo_hab = thab.id_tipo_habitacion
       WHERE t.id_tarifa = $1;
@@ -72,7 +82,7 @@ const obtenerTarifaPorId = async (peticion, respuesta) => {
   }
 };
 
-// 3. Obtener catálogo de tipos de habitación (para selects del frontend)
+// 3. Catálogo de tipos de habitación
 const obtenerTiposHabitacion = async (peticion, respuesta) => {
   try {
     const resultado = await conexion.query(
@@ -85,13 +95,50 @@ const obtenerTiposHabitacion = async (peticion, respuesta) => {
   }
 };
 
-// 4. Crear una nueva tarifa
+// 4. Catálogo de temporadas
+const obtenerTemporadas = async (peticion, respuesta) => {
+  try {
+    const resultado = await conexion.query('SELECT * FROM temporada ORDER BY id_temporada ASC;');
+    return respuesta.status(200).json(resultado.rows);
+  } catch (error) {
+    console.error('Error al obtener temporadas:', error);
+    return respuesta.status(500).json({ mensaje: 'Error al consultar las temporadas.' });
+  }
+};
+
+const crearTemporada = async (peticion, respuesta) => {
+  const { nombre_temporada, dia_inicio, mes_inicio, dia_fin, mes_fin, descripcion } = peticion.body;
+
+  if (!nombre_temporada || !dia_inicio || !mes_inicio || !dia_fin || !mes_fin) {
+    return respuesta.status(400).json({ mensaje: 'Todos los campos de fecha de la temporada son obligatorios.' });
+  }
+
+  try {
+    const resultado = await conexion.query(`
+      INSERT INTO temporada (nombre_temporada, dia_inicio, mes_inicio, dia_fin, mes_fin, descripcion)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *;
+    `, [nombre_temporada.trim(), dia_inicio, mes_inicio, dia_fin, mes_fin, descripcion ? descripcion.trim() : '']);
+
+    const idUsuario = peticion.body.id_usuario || peticion.query.id_usuario || 1;
+    await registrarAuditoria(idUsuario, 6, `Creó la temporada "${nombre_temporada.trim()}"`);
+
+    return respuesta.status(201).json({ mensaje: 'Temporada registrada exitosamente.', temporada: resultado.rows[0] });
+  } catch (error) {
+    console.error('Error al crear temporada:', error);
+    if (error.code === '23505') {
+      return respuesta.status(400).json({ mensaje: 'Ya existe una temporada con ese nombre.' });
+    }
+    return respuesta.status(500).json({ mensaje: 'Error interno al guardar la temporada.' });
+  }
+};
+
+// 5. Crear una nueva tarifa
 const crearTarifa = async (peticion, respuesta) => {
   const { 
     nombre_tarifa, 
+    id_temporada,
     id_tipo_habitacion, 
-    vigente_desde, 
-    vigente_hasta, 
     precio_base, 
     iva, 
     ocupacion_base, 
@@ -100,9 +147,9 @@ const crearTarifa = async (peticion, respuesta) => {
     estado 
   } = peticion.body;
 
-  if (!nombre_tarifa || !vigente_desde || !vigente_hasta) {
+  if (!nombre_tarifa || !id_temporada || !id_tipo_habitacion) {
     return respuesta.status(400).json({
-      mensaje: 'El nombre de la tarifa y las fechas de vigencia son obligatorios.'
+      mensaje: 'El nombre de la tarifa, la temporada y la habitación son obligatorios.'
     });
   }
 
@@ -111,38 +158,34 @@ const crearTarifa = async (peticion, respuesta) => {
   try {
     await cliente.query('BEGIN');
 
-    // 1. Insertar en tabla tarifa
     const consultaTarifa = `
       INSERT INTO tarifa (
+        id_temporada,
         nombre_tarifa, 
         ocupacion_base, 
-        vigente_desde, 
-        vigente_hasta, 
         incluye, 
         precio_base, 
         estado, 
         iva, 
         huesped_adicional
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING id_tarifa;
     `;
 
     const resultadoTarifa = await cliente.query(consultaTarifa, [
+      parseInt(id_temporada),
       nombre_tarifa.trim(),
-      parseInt(ocupacion_base) || 2,
-      vigente_desde,
-      vigente_hasta,
+      parseInt(ocupacion_base) || 1,
       incluye ? incluye.trim() : '',
-      parseFloat(precio_base) || 0.00,
+      parseFloat(precio_base) || 120.00,
       estado || 'Activa',
       parseFloat(iva) || 16.00,
-      parseFloat(huesped_adicional) || 0.00
+      parseFloat(huesped_adicional) || 15.00
     ]);
 
     const idNuevaTarifa = resultadoTarifa.rows[0].id_tarifa;
 
-    // 2. Vincular con tipo de habitación en tarifa_hab
     let nombreHabitacion = 'Habitación General';
     if (id_tipo_habitacion) {
       await cliente.query(`
@@ -162,7 +205,7 @@ const crearTarifa = async (peticion, respuesta) => {
     const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
     await registrarAuditoria(
       idUsuarioResponsable, 
-      'Tarifas', 
+      6, 
       `Creó la tarifa comercial "${nombre_tarifa.trim()}" asignada a ${nombreHabitacion} con precio base de $${parseFloat(precio_base || 0).toFixed(2)}`
     );
 
@@ -181,14 +224,13 @@ const crearTarifa = async (peticion, respuesta) => {
   }
 };
 
-// 5. Actualizar tarifa existente
+// 6. Actualizar tarifa existente
 const actualizarTarifa = async (peticion, respuesta) => {
   const { id } = peticion.params;
   const { 
     nombre_tarifa, 
+    id_temporada,
     id_tipo_habitacion, 
-    vigente_desde, 
-    vigente_hasta, 
     precio_base, 
     iva, 
     ocupacion_base, 
@@ -197,9 +239,9 @@ const actualizarTarifa = async (peticion, respuesta) => {
     estado 
   } = peticion.body;
 
-  if (!nombre_tarifa || !vigente_desde || !vigente_hasta) {
+  if (!nombre_tarifa || !id_temporada || !id_tipo_habitacion) {
     return respuesta.status(400).json({
-      mensaje: 'El nombre de la tarifa y las fechas de vigencia son obligatorios.'
+      mensaje: 'El nombre de la tarifa, la temporada y la habitación son obligatorios.'
     });
   }
 
@@ -208,10 +250,10 @@ const actualizarTarifa = async (peticion, respuesta) => {
   try {
     await cliente.query('BEGIN');
 
-    // 1. Obtener datos anteriores para tracking detallado de cambios
     const tarifaAnteriorRes = await cliente.query(`
-      SELECT t.*, thab.nombre_tipo AS nombre_habitacion 
+      SELECT t.*, thab.nombre_tipo AS nombre_habitacion, tp.nombre_temporada
       FROM tarifa t
+      JOIN temporada tp ON t.id_temporada = tp.id_temporada
       LEFT JOIN tarifa_hab th ON t.id_tarifa = th.id_tarifa
       LEFT JOIN tipo_habitacion thab ON th.id_tipo_hab = thab.id_tipo_habitacion
       WHERE t.id_tarifa = $1;
@@ -232,27 +274,24 @@ const actualizarTarifa = async (peticion, respuesta) => {
       }
     }
 
-    // 2. Actualizar tabla tarifa
     const consultaUpdate = `
       UPDATE tarifa
       SET 
-        nombre_tarifa = $1,
-        ocupacion_base = $2,
-        vigente_desde = $3,
-        vigente_hasta = $4,
-        incluye = $5,
-        precio_base = $6,
-        estado = $7,
-        iva = $8,
-        huesped_adicional = $9
-      WHERE id_tarifa = $10;
+        id_temporada = $1,
+        nombre_tarifa = $2,
+        ocupacion_base = $3,
+        incluye = $4,
+        precio_base = $5,
+        estado = $6,
+        iva = $7,
+        huesped_adicional = $8
+      WHERE id_tarifa = $9;
     `;
 
     await cliente.query(consultaUpdate, [
+      parseInt(id_temporada),
       nombre_tarifa.trim(),
-      parseInt(ocupacion_base) || 2,
-      vigente_desde,
-      vigente_hasta,
+      parseInt(ocupacion_base) || 1,
       incluye ? incluye.trim() : '',
       parseFloat(precio_base) || 0.00,
       estado || 'Activa',
@@ -261,7 +300,6 @@ const actualizarTarifa = async (peticion, respuesta) => {
       id
     ]);
 
-    // 3. Actualizar relación en tarifa_hab
     await cliente.query('DELETE FROM tarifa_hab WHERE id_tarifa = $1', [id]);
     if (id_tipo_habitacion) {
       await cliente.query(`
@@ -272,32 +310,25 @@ const actualizarTarifa = async (peticion, respuesta) => {
 
     await cliente.query('COMMIT');
 
-    // Detectar cambios exactamente sin mostrar IDs
     let cambios = [];
     if (tarifaAnterior.nombre_tarifa !== nombre_tarifa.trim()) {
       cambios.push(`nombre de "${tarifaAnterior.nombre_tarifa}" a "${nombre_tarifa.trim()}"`);
     }
     if (String(tarifaAnterior.nombre_habitacion || 'Sin asignar') !== String(nuevaHabitacionNombre)) {
-      cambios.push(`habitación asignada de "${tarifaAnterior.nombre_habitacion || 'Sin asignar'}" a "${nuevaHabitacionNombre}"`);
+      cambios.push(`habitación asignada a "${nuevaHabitacionNombre}"`);
     }
     if (parseFloat(tarifaAnterior.precio_base) !== parseFloat(precio_base || 0)) {
       cambios.push(`precio base de $${parseFloat(tarifaAnterior.precio_base).toFixed(2)} a $${parseFloat(precio_base || 0).toFixed(2)}`);
     }
     if (String(tarifaAnterior.estado) !== String(estado || 'Activa')) {
-      cambios.push(`estado de "${tarifaAnterior.estado}" a "${estado || 'Activa'}"`);
-    }
-    if (parseInt(tarifaAnterior.ocupacion_base) !== parseInt(ocupacion_base || 2)) {
-      cambios.push(`ocupación base de ${tarifaAnterior.ocupacion_base} a ${ocupacion_base || 2}`);
-    }
-    if (parseFloat(tarifaAnterior.huesped_adicional) !== parseFloat(huesped_adicional || 0)) {
-      cambios.push(`huésped adicional de $${parseFloat(tarifaAnterior.huesped_adicional).toFixed(2)} a $${parseFloat(huesped_adicional || 0).toFixed(2)}`);
+      cambios.push(`estado a "${estado || 'Activa'}"`);
     }
 
-    const detalleModificacion = cambios.length > 0 ? cambios.join(', ') : 'actualizó los datos sin cambios notables';
+    const detalleModificacion = cambios.length > 0 ? cambios.join(', ') : 'actualizó los datos';
     const descripcionAuditoria = `Actualizó la tarifa comercial "${tarifaAnterior.nombre_tarifa}": modificó ${detalleModificacion}.`;
 
     const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
-    await registrarAuditoria(idUsuarioResponsable, 'Tarifas', descripcionAuditoria);
+    await registrarAuditoria(idUsuarioResponsable, 6, descripcionAuditoria);
 
     return respuesta.status(200).json({
       mensaje: 'Tarifa actualizada correctamente.'
@@ -313,7 +344,7 @@ const actualizarTarifa = async (peticion, respuesta) => {
   }
 };
 
-// 6. Eliminar tarifa
+// 7. Eliminar tarifa
 const eliminarTarifa = async (peticion, respuesta) => {
   const { id } = peticion.params;
   const cliente = await conexion.connect();
@@ -321,7 +352,6 @@ const eliminarTarifa = async (peticion, respuesta) => {
   try {
     await cliente.query('BEGIN');
 
-    // Obtener información comercial antes de eliminar para el log
     const tarifaInfoRes = await cliente.query(`
       SELECT t.nombre_tarifa, thab.nombre_tipo AS nombre_habitacion
       FROM tarifa t
@@ -332,12 +362,8 @@ const eliminarTarifa = async (peticion, respuesta) => {
 
     const tarifaInfo = tarifaInfoRes.rows[0];
     const nombreTarifaEliminada = tarifaInfo ? tarifaInfo.nombre_tarifa : 'una tarifa';
-    const habitacionAsociada = tarifaInfo?.nombre_habitacion ? ` de la habitación ${tarifaInfo.nombre_habitacion}` : '';
 
-    // 1. Eliminar referencias en tarifa_hab
     await cliente.query('DELETE FROM tarifa_hab WHERE id_tarifa = $1', [id]);
-
-    // 2. Eliminar de la tabla tarifa
     const resultado = await cliente.query('DELETE FROM tarifa WHERE id_tarifa = $1 RETURNING id_tarifa', [id]);
 
     if (resultado.rowCount === 0) {
@@ -348,7 +374,7 @@ const eliminarTarifa = async (peticion, respuesta) => {
     await cliente.query('COMMIT');
 
     const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
-    await registrarAuditoria(idUsuarioResponsable, 'Tarifas', `Eliminó permanentemente la tarifa comercial "${nombreTarifaEliminada}"${habitacionAsociada}`);
+    await registrarAuditoria(idUsuarioResponsable, 6, `Eliminó permanentemente la tarifa comercial "${nombreTarifaEliminada}"`);
 
     return respuesta.status(200).json({
       mensaje: 'Tarifa eliminada permanentemente del sistema.'
@@ -364,7 +390,7 @@ const eliminarTarifa = async (peticion, respuesta) => {
   }
 };
 
-// 7. Duplicar tarifa
+// 8. Duplicar tarifa
 const duplicarTarifa = async (peticion, respuesta) => {
   const { id } = peticion.params;
   const cliente = await conexion.connect();
@@ -372,7 +398,6 @@ const duplicarTarifa = async (peticion, respuesta) => {
   try {
     await cliente.query('BEGIN');
 
-    // 1. Obtener la original
     const origRes = await cliente.query('SELECT * FROM tarifa WHERE id_tarifa = $1', [id]);
     if (origRes.rows.length === 0) {
       await cliente.query('ROLLBACK');
@@ -382,26 +407,23 @@ const duplicarTarifa = async (peticion, respuesta) => {
     const orig = origRes.rows[0];
     const nuevoNombre = `${orig.nombre_tarifa} (Copia)`;
 
-    // 2. Insertar copia
     const insRes = await cliente.query(`
       INSERT INTO tarifa (
+        id_temporada,
         nombre_tarifa, 
         ocupacion_base, 
-        vigente_desde, 
-        vigente_hasta, 
         incluye, 
         precio_base, 
         estado, 
         iva, 
         huesped_adicional
       )
-      VALUES ($1, $2, $3, $4, $5, $6, 'Borrador', $7, $8)
+      VALUES ($1, $2, $3, $4, $5, 'Borrador', $6, $7)
       RETURNING id_tarifa;
     `, [
+      orig.id_temporada,
       nuevoNombre,
       orig.ocupacion_base,
-      orig.vigente_desde,
-      orig.vigente_hasta,
       orig.incluye,
       orig.precio_base,
       orig.iva,
@@ -410,7 +432,6 @@ const duplicarTarifa = async (peticion, respuesta) => {
 
     const nuevaId = insRes.rows[0].id_tarifa;
 
-    // 3. Copiar relación con tipo de habitación
     const habRes = await cliente.query('SELECT id_tipo_hab FROM tarifa_hab WHERE id_tarifa = $1', [id]);
     if (habRes.rows.length > 0) {
       await cliente.query(`
@@ -422,7 +443,7 @@ const duplicarTarifa = async (peticion, respuesta) => {
     await cliente.query('COMMIT');
 
     const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
-    await registrarAuditoria(idUsuarioResponsable, 'Tarifas', `Duplicó la tarifa comercial "${orig.nombre_tarifa}" generando la nueva tarifa "${nuevoNombre}" en estado Borrador`);
+    await registrarAuditoria(idUsuarioResponsable, 6, `Duplicó la tarifa comercial "${orig.nombre_tarifa}" generando la nueva tarifa "${nuevoNombre}" en estado Borrador`);
 
     return respuesta.status(201).json({
       mensaje: 'Tarifa duplicada correctamente en estado Borrador.',
@@ -439,7 +460,7 @@ const duplicarTarifa = async (peticion, respuesta) => {
   }
 };
 
-// 8. Consultar Tasa Oficial BCV del día en vivo mediante API pública
+// 9. Consultar Tasa Oficial BCV del día en vivo mediante API pública
 let cacheTasaBCV = {
   tasa: 872.39,
   fecha: new Date().toISOString(),
@@ -476,6 +497,8 @@ module.exports = {
   obtenerTarifas,
   obtenerTarifaPorId,
   obtenerTiposHabitacion,
+  obtenerTemporadas,
+  crearTemporada,
   crearTarifa,
   actualizarTarifa,
   eliminarTarifa,
