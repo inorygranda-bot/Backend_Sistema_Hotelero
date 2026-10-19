@@ -92,6 +92,9 @@ const crearHabitacion = async (peticion, respuesta) => {
     });
   }
 
+  // Prevenir marcarla como Ocupada al crearla manualmente
+  const estadoFinal = estado === 'Ocupada' ? 'Disponible' : (estado || 'Disponible');
+
   const cliente = await conexion.connect();
 
   try {
@@ -107,7 +110,7 @@ const crearHabitacion = async (peticion, respuesta) => {
       id_tipo_habitacion,
       piso.trim(),
       capacidad,
-      estado || 'Disponible',
+      estadoFinal,
       amenidades.trim()
     ]);
 
@@ -175,6 +178,14 @@ const actualizarHabitacion = async (peticion, respuesta) => {
 
     const habAntigua = habAntiguaRes.rows[0];
 
+    // Mantener el estado actual si la habitación está Ocupada
+    let estadoAplicar = estado || 'Disponible';
+    if (habAntigua.estado === 'Ocupada') {
+      estadoAplicar = 'Ocupada';
+    } else if (estadoAplicar === 'Ocupada') {
+      estadoAplicar = 'Disponible'; // No se permite pasar manualmente a Ocupada sin check-in de reserva
+    }
+
     const tipoHabRes = await cliente.query('SELECT nombre_tipo FROM tipo_habitacion WHERE id_tipo_habitacion = $1', [id_tipo_habitacion]);
     const nombreTipoNuevo = tipoHabRes.rows[0]?.nombre_tipo || 'Estándar';
 
@@ -188,7 +199,7 @@ const actualizarHabitacion = async (peticion, respuesta) => {
       id_tipo_habitacion,
       piso.trim(),
       capacidad,
-      estado || 'Disponible',
+      estadoAplicar,
       amenidades.trim(),
       id
     ]);
@@ -197,7 +208,7 @@ const actualizarHabitacion = async (peticion, respuesta) => {
     if (habAntigua.nombre_tipo !== nombreTipoNuevo) cambios.push(`tipo de "${habAntigua.nombre_tipo}" a "${nombreTipoNuevo}"`);
     if (String(habAntigua.piso) !== String(piso.trim())) cambios.push(`piso de "${habAntigua.piso}" a "${piso.trim()}"`);
     if (Number(habAntigua.capacidad) !== Number(capacidad)) cambios.push(`capacidad de ${habAntigua.capacidad} a ${capacidad}`);
-    if (String(habAntigua.estado) !== String(estado || 'Disponible')) cambios.push(`estado de "${habAntigua.estado}" a "${estado || 'Disponible'}"`);
+    if (String(habAntigua.estado) !== String(estadoAplicar)) cambios.push(`estado de "${habAntigua.estado}" a "${estadoAplicar}"`);
 
     const detalleCambios = cambios.length > 0 ? cambios.join(', ') : 'actualizó las amenidades o detalles';
 
@@ -224,132 +235,36 @@ const actualizarHabitacion = async (peticion, respuesta) => {
   }
 };
 
-const checkinHabitacion = async (peticion, respuesta) => {
-  const { id } = peticion.params;
-  const cliente = await conexion.connect();
-
-  try {
-    await cliente.query('BEGIN');
-
-    const check = await cliente.query(
-      'SELECT estado FROM habitacion WHERE codigo_habitacion = $1',
-      [id]
-    );
-
-    if (check.rows.length === 0) {
-      await cliente.query('ROLLBACK');
-      return respuesta.status(404).json({ mensaje: 'Habitación no encontrada.' });
-    }
-
-    if (check.rows[0].estado !== 'Disponible') {
-      await cliente.query('ROLLBACK');
-      return respuesta.status(400).json({ 
-        mensaje: 'Solo se puede hacer check-in en habitaciones Disponibles.' 
-      });
-    }
-
-    const consultaSQL = `
-      UPDATE habitacion
-      SET estado = 'Ocupada'
-      WHERE codigo_habitacion = $1
-      RETURNING *;
-    `;
-
-    const resultado = await cliente.query(consultaSQL, [id]);
-
-    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
-
-    await cliente.query('COMMIT');
-
-    await registrarAuditoria(
-      idUsuarioResponsable, 
-      'Habitaciones', 
-      `Realizó el Check-in (ocupación) en la habitación N° ${id}`
-    );
-
-    return respuesta.status(200).json({
-      mensaje: 'Check-in realizado correctamente.',
-      habitacion: resultado.rows[0]
-    });
-  } catch (error) {
-    await cliente.query('ROLLBACK');
-    console.error(`Error en check-in habitación ID ${id}:`, error);
-    return respuesta.status(500).json({ mensaje: 'Error al realizar el check-in.' });
-  } finally {
-    cliente.release();
-  }
-};
-
-const checkoutHabitacion = async (peticion, respuesta) => {
-  const { id } = peticion.params;
-  const cliente = await conexion.connect();
-
-  try {
-    await cliente.query('BEGIN');
-
-    const check = await cliente.query(
-      'SELECT estado FROM habitacion WHERE codigo_habitacion = $1',
-      [id]
-    );
-
-    if (check.rows.length === 0) {
-      await cliente.query('ROLLBACK');
-      return respuesta.status(404).json({ mensaje: 'Habitación no encontrada.' });
-    }
-
-    if (check.rows[0].estado !== 'Ocupada') {
-      await cliente.query('ROLLBACK');
-      return respuesta.status(400).json({ 
-        mensaje: 'Solo se puede hacer check-out en habitaciones Ocupadas.' 
-      });
-    }
-
-    const consultaSQL = `
-      UPDATE habitacion
-      SET estado = 'Sucia'
-      WHERE codigo_habitacion = $1
-      RETURNING *;
-    `;
-
-    const resultado = await cliente.query(consultaSQL, [id]);
-
-    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
-
-    await cliente.query('COMMIT');
-
-    await registrarAuditoria(
-      idUsuarioResponsable, 
-      'Habitaciones', 
-      `Realizó el Check-out en la habitación N° ${id} (marcada como Sucia para limpieza)`
-    );
-
-    return respuesta.status(200).json({
-      mensaje: 'Check-out realizado. La habitación quedó en estado Sucia.',
-      habitacion: resultado.rows[0]
-    });
-  } catch (error) {
-    await cliente.query('ROLLBACK');
-    console.error(`Error en check-out habitación ID ${id}:`, error);
-    return respuesta.status(500).json({ mensaje: 'Error al realizar el check-out.' });
-  } finally {
-    cliente.release();
-  }
-};
-
 const cambiarEstadoHabitacion = async (peticion, respuesta) => {
   const { id } = peticion.params;
   const { estado } = peticion.body;
 
-  const estadosValidos = ['Disponible', 'Ocupada', 'Sucia', 'Fuera de servicio'];
+  // Solo se permiten cambios operativos/mantenimiento desde este módulo
+  const estadosValidos = ['Disponible', 'Sucia', 'Fuera de servicio'];
 
   if (!estado || !estadosValidos.includes(estado)) {
-    return respuesta.status(400).json({ mensaje: 'Estado no válido.' });
+    return respuesta.status(400).json({ 
+      mensaje: 'Estado no válido. El estado Ocupada solo se gestiona mediante el módulo de Reservas (Check-in / Check-out).' 
+    });
   }
 
   const cliente = await conexion.connect();
 
   try {
     await cliente.query('BEGIN');
+
+    const habRes = await cliente.query('SELECT estado FROM habitacion WHERE codigo_habitacion = $1', [id]);
+    if (habRes.rows.length === 0) {
+      await cliente.query('ROLLBACK');
+      return respuesta.status(404).json({ mensaje: 'Habitación no encontrada.' });
+    }
+
+    if (habRes.rows[0].estado === 'Ocupada') {
+      await cliente.query('ROLLBACK');
+      return respuesta.status(400).json({ 
+        mensaje: 'La habitación está actualmente Ocupada. Para realizar Check-out diríjase al módulo de Reservas.' 
+      });
+    }
 
     const consultaSQL = `
       UPDATE habitacion
@@ -360,11 +275,6 @@ const cambiarEstadoHabitacion = async (peticion, respuesta) => {
 
     const resultado = await cliente.query(consultaSQL, [estado, id]);
 
-    if (resultado.rowCount === 0) {
-      await cliente.query('ROLLBACK');
-      return respuesta.status(404).json({ mensaje: 'Habitación no encontrada.' });
-    }
-
     const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
 
     await cliente.query('COMMIT');
@@ -372,7 +282,7 @@ const cambiarEstadoHabitacion = async (peticion, respuesta) => {
     await registrarAuditoria(
       idUsuarioResponsable, 
       'Habitaciones', 
-      `Cambió el estado de la habitación N° ${id} a "${estado}"`
+      `Cambió el estado operativo de la habitación N° ${id} a "${estado}"`
     );
 
     return respuesta.status(200).json({
@@ -443,8 +353,6 @@ module.exports = {
   obtenerHabitacionPorId,
   crearHabitacion,
   actualizarHabitacion,
-  checkinHabitacion,
-  checkoutHabitacion,
   cambiarEstadoHabitacion,
   eliminarHabitacion
 };

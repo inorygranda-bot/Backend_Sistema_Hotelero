@@ -1,7 +1,7 @@
-const express = require('express');
-const enrutador = express.Router();
+const { Router } = require('express');
+const router = Router();
 const { obtenerModulosConFunciones } = require('../controladores/controlador_modulos');
 
-enrutador.get('/', obtenerModulosConFunciones);
+router.get('/', obtenerModulosConFunciones);
 
-module.exports = enrutador;
+module.exports = router;

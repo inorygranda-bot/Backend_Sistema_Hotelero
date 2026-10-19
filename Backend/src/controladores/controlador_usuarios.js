@@ -46,14 +46,13 @@ const obtenerUsuarioPorId = async (peticion, respuesta) => {
 };
 
 const crearUsuario = async (peticion, respuesta) => {
-  const { id_rol, nombre, correo, contrasenna, estado, id_admin } = peticion.body;
+  const { id_rol, nombre, correo, contrasenna, estado, id_usuario_responsable, id_admin } = peticion.body;
 
   if (!id_rol || !nombre || !correo || !contrasenna) {
     return respuesta.status(400).json({ mensaje: 'Todos los campos obligatorios del usuario deben completarse.' });
   }
 
   try {
-    // Consultar el nombre del rol para que la auditoría sea más descriptiva
     const consultaRol = `SELECT nombre FROM rol WHERE id_rol = $1;`;
     const resRol = await conexion.query(consultaRol, [id_rol]);
     const nombreRol = resRol.rows[0] ? resRol.rows[0].nombre : 'Rol asignado';
@@ -75,13 +74,16 @@ const crearUsuario = async (peticion, respuesta) => {
     ]);
 
     const usuarioCreado = resultado.rows[0];
-    const idUsuarioResponsable = id_admin || peticion.body.id_usuario_responsable || 1;
+    const idResponsable = id_admin || id_usuario_responsable || 1;
 
-    // Auditoría específica y sin mostrar IDs
+    // Obtener nombre del responsable para auditoría limpia
+    const respQuery = await conexion.query('SELECT nombre FROM usuario WHERE id_usuario = $1', [idResponsable]);
+    const nombreResponsable = respQuery.rows[0]?.nombre || 'Administrador';
+
     await registrarAuditoria(
-      idUsuarioResponsable, 
-      'Rol y Usuarios', 
-      `Registró al nuevo usuario: ${usuarioCreado.nombre} (${usuarioCreado.correo}) con el rol "${nombreRol}" y estado ${usuarioCreado.estado}`
+      idResponsable,
+      9, // ID del módulo Rol y Usuarios
+      `${nombreResponsable} registró al nuevo usuario "${usuarioCreado.nombre}" (${usuarioCreado.correo}) con el rol "${nombreRol}" y estado ${usuarioCreado.estado}.`
     );
 
     return respuesta.status(201).json({
@@ -90,25 +92,22 @@ const crearUsuario = async (peticion, respuesta) => {
     });
   } catch (error) {
     console.error('Error al registrar usuario:', error);
-
     if (error.code === '23505') {
       return respuesta.status(400).json({ mensaje: 'El correo electrónico ya se encuentra registrado en el sistema.' });
     }
-
     return respuesta.status(500).json({ mensaje: 'Error interno al intentar guardar el usuario.' });
   }
 };
 
 const actualizarUsuario = async (peticion, respuesta) => {
-  const { id } = peticion.params; // ID del usuario que se está editando
-  const { id_rol, nombre, correo, contrasenna, estado, id_admin } = peticion.body;
+  const { id } = peticion.params;
+  const { id_rol, nombre, correo, contrasenna, estado, id_usuario_responsable, id_admin } = peticion.body;
 
   if (!id_rol || !nombre || !correo) {
     return respuesta.status(400).json({ mensaje: 'Por favor complete los campos obligatorios.' });
   }
 
   try {
-    // 1. Obtener los datos actuales del usuario antes de actualizar para comparar cambios
     const consultaPrev = `
       SELECT u.*, r.nombre AS nombre_rol 
       FROM usuario u 
@@ -123,12 +122,10 @@ const actualizarUsuario = async (peticion, respuesta) => {
 
     const usuarioAnterior = resultadoPrev.rows[0];
 
-    // Consultar el nombre del nuevo rol
     const consultaRolNuevo = `SELECT nombre FROM rol WHERE id_rol = $1;`;
     const resultadoRolNuevo = await conexion.query(consultaRolNuevo, [id_rol]);
     const nombreRolNuevo = resultadoRolNuevo.rows[0] ? resultadoRolNuevo.rows[0].nombre : 'Rol desconocido';
 
-    // 2. Ejecutar la actualización
     let consultaSQL = '';
     let parametros = [];
 
@@ -156,7 +153,6 @@ const actualizarUsuario = async (peticion, respuesta) => {
     const resultado = await conexion.query(consultaSQL, parametros);
     const usuarioActualizado = resultado.rows[0];
 
-    // 3. Detectar exactamente qué modificaciones se hicieron
     let cambios = [];
     if (usuarioAnterior.nombre !== nombre.trim()) {
       cambios.push(`nombre de "${usuarioAnterior.nombre}" a "${nombre.trim()}"`);
@@ -176,15 +172,15 @@ const actualizarUsuario = async (peticion, respuesta) => {
     }
 
     const detalleModificacion = cambios.length > 0 ? cambios.join(', ') : 'actualizó sus datos generales sin cambios notables';
-    const descripcionAuditoria = `Actualizó al usuario ${usuarioAnterior.nombre}: modificó ${detalleModificacion}.`;
+    const idResponsable = id_admin || id_usuario_responsable || 1;
 
-    // 4. Asegurar que el responsable sea el administrador que ejecuta la acción (id_admin) y no el usuario editado
-    const idUsuarioResponsable = id_admin || peticion.body.id_usuario_responsable || 1;
+    const respQuery = await conexion.query('SELECT nombre FROM usuario WHERE id_usuario = $1', [idResponsable]);
+    const nombreResponsable = respQuery.rows[0]?.nombre || 'Administrador';
 
     await registrarAuditoria(
-      idUsuarioResponsable,
-      'Rol y Usuarios',
-      descripcionAuditoria
+      idResponsable,
+      9,
+      `${nombreResponsable} actualizó al usuario "${usuarioAnterior.nombre}": modificó ${detalleModificacion}.`
     );
 
     return respuesta.status(200).json({
@@ -199,17 +195,13 @@ const actualizarUsuario = async (peticion, respuesta) => {
 
 const eliminarUsuario = async (peticion, respuesta) => {
   const { id } = peticion.params;
-  const { id_admin } = peticion.body;
+  const { id_usuario_responsable, id_admin } = peticion.body;
 
   try {
     const consultaPrev = await conexion.query('SELECT nombre, correo FROM usuario WHERE id_usuario = $1', [id]);
     const infoUsuario = consultaPrev.rows[0];
 
-    const consultaSQL = `
-      DELETE FROM usuario
-      WHERE id_usuario = $1
-      RETURNING *;
-    `;
+    const consultaSQL = `DELETE FROM usuario WHERE id_usuario = $1 RETURNING *;`;
     const resultado = await conexion.query(consultaSQL, [id]);
 
     if (resultado.rowCount === 0) {
@@ -217,13 +209,15 @@ const eliminarUsuario = async (peticion, respuesta) => {
     }
 
     const nombreEliminado = infoUsuario ? `${infoUsuario.nombre} (${infoUsuario.correo})` : 'un usuario del sistema';
-    const idUsuarioResponsable = id_admin || peticion.body.id_usuario_responsable || 1;
+    const idResponsable = id_admin || id_usuario_responsable || peticion.query.id_usuario || 1;
 
-    // Auditoría específica y sin IDs
+    const respQuery = await conexion.query('SELECT nombre FROM usuario WHERE id_usuario = $1', [idResponsable]);
+    const nombreResponsable = respQuery.rows[0]?.nombre || 'Administrador';
+
     await registrarAuditoria(
-      idUsuarioResponsable, 
-      'Rol y Usuarios', 
-      `Eliminó permanentemente al usuario: ${nombreEliminado}`
+      idResponsable,
+      9,
+      `${nombreResponsable} eliminó permanentemente al usuario: ${nombreEliminado}`
     );
 
     return respuesta.status(200).json({
@@ -232,11 +226,9 @@ const eliminarUsuario = async (peticion, respuesta) => {
     });
   } catch (error) {
     console.error('Error al eliminar el usuario:', error);
-
     if (error.code === '23503') {
       return respuesta.status(400).json({ mensaje: 'No se puede eliminar el usuario porque tiene reservas, pagos o registros en auditoría asociados.' });
     }
-
     return respuesta.status(500).json({ mensaje: 'Error al intentar eliminar el usuario.' });
   }
 };
@@ -273,13 +265,14 @@ const iniciarSesion = async (peticion, respuesta) => {
       return respuesta.status(401).json({ mensaje: 'Correo o contraseña incorrectos.' });
     }
 
-    await registrarAuditoria(usuario.id_usuario, 'Rol y Usuarios', `Inició sesión exitosamente el usuario ${usuario.nombre} (${usuario.correo})`);
+    await registrarAuditoria(usuario.id_usuario, 9, `El usuario "${usuario.nombre}" (${usuario.correo}) inició sesión exitosamente.`);
 
     const consultaModulos = `
-      SELECT id_modulo 
-      FROM rol_modulo 
-      WHERE id_rol = $1;
-    `;
+  SELECT DISTINCT f.id_modulo 
+  FROM rol_funcion rf 
+  JOIN funcion f ON rf.id_funcion = f.id_funcion 
+  WHERE rf.id_rol = $1;
+`;
     const resModulos = await conexion.query(consultaModulos, [usuario.id_rol]);
     const modulosAsignados = resModulos.rows.map(row => row.id_modulo);
 
@@ -289,7 +282,7 @@ const iniciarSesion = async (peticion, respuesta) => {
       mensaje: 'Inicio de sesión exitoso.',
       usuario: {
         ...datosUsuario,
-        modulos: modulosAsignados 
+        modulos: modulosAsignados
       }
     });
   } catch (error) {
@@ -306,8 +299,8 @@ const registrarCierreSesion = async (peticion, respuesta) => {
 
     await registrarAuditoria(
       id_usuario || 1,
-      'Usuarios y Roles',
-      `El usuario ${nombreUsuario} cerró sesión en el sistema`
+      9,
+      `El usuario "${nombreUsuario}" cerró sesión en el sistema.`
     );
 
     return respuesta.status(200).json({ mensaje: 'Cierre de sesión registrado en auditoría.' });
