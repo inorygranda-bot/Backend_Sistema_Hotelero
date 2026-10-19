@@ -1,7 +1,6 @@
 const conexion = require('../config/conexion');
 const { registrarAuditoria } = require('./controlador_auditoria');
 
-// Obtener todos los pagos registrados con detalles de la reserva y huésped
 const obtenerPagos = async (peticion, respuesta) => {
   try {
     const consultaSQL = `
@@ -14,40 +13,41 @@ const obtenerPagos = async (peticion, respuesta) => {
         p.fecha_pago,
         p.moneda,
         p.monto,
-        p.banco_destino,
-        p.num_referencia,
         p.descripcion,
+        tb.num_referencia,
+        b_dest.nombre_banco AS banco_destino,
         r.id_huesped,
         h.nombre AS nombre_huesped
       FROM pago p
       JOIN reserva r ON p.codigo_reserva = r.codigo_reserva
       JOIN huesped h ON r.id_huesped = h.id_huesped
       JOIN usuario u ON p.id_usuario = u.id_usuario
+      LEFT JOIN transaccion_bancaria tb ON p.id_pago = tb.id_pago
+      LEFT JOIN banco b_dest ON tb.id_banco_destino = b_dest.id_banco
       ORDER BY p.id_pago DESC;
     `;
-    
     const resultado = await conexion.query(consultaSQL);
     return respuesta.status(200).json(resultado.rows);
   } catch (error) {
     console.error('Error al obtener la lista de pagos:', error);
-    return respuesta.status(500).json({ 
-      mensaje: 'Error al consultar los pagos en la base de datos.' 
-    });
+    return respuesta.status(500).json({ mensaje: 'Error al consultar los pagos en la base de datos.' });
   }
 };
 
-// Obtener un pago específico por su ID
 const obtenerPagoPorId = async (peticion, respuesta) => {
   const { id } = peticion.params;
-
   try {
-    const consultaSQL = `SELECT * FROM pago WHERE id_pago = $1;`;
+    const consultaSQL = `
+      SELECT p.*, tb.num_referencia, b_dest.nombre_banco AS banco_destino
+      FROM pago p
+      LEFT JOIN transaccion_bancaria tb ON p.id_pago = tb.id_pago
+      LEFT JOIN banco b_dest ON tb.id_banco_destino = b_dest.id_banco
+      WHERE p.id_pago = $1;
+    `;
     const resultado = await conexion.query(consultaSQL, [id]);
-
     if (resultado.rows.length === 0) {
       return respuesta.status(404).json({ mensaje: 'Pago no encontrado.' });
     }
-
     return respuesta.status(200).json(resultado.rows[0]);
   } catch (error) {
     console.error(`Error al obtener el pago ID ${id}:`, error);
@@ -55,29 +55,24 @@ const obtenerPagoPorId = async (peticion, respuesta) => {
   }
 };
 
-// Registrar un nuevo pago, convirtiendo la moneda si es VES y actualizando la reserva en USD
 const crearPago = async (peticion, respuesta) => {
   const { 
     codigo_reserva, 
     metodo_pago, 
     moneda, 
     monto, 
-    banco_destino, 
+    id_banco_destino,
     num_referencia, 
     descripcion,
     tasa_bcv 
   } = peticion.body;
 
   if (!codigo_reserva || !metodo_pago || !moneda || monto === undefined || monto === '' || !descripcion) {
-    return respuesta.status(400).json({ 
-      mensaje: 'Todos los campos obligatorios del pago deben ser completados.' 
-    });
+    return respuesta.status(400).json({ mensaje: 'Todos los campos obligatorios del pago deben ser completados.' });
   }
 
   if (isNaN(monto) || Number(monto) <= 0) {
-    return respuesta.status(400).json({
-      mensaje: 'El monto del pago debe ser un número mayor a cero.'
-    });
+    return respuesta.status(400).json({ mensaje: 'El monto del pago debe ser un número mayor a cero.' });
   }
 
   const cliente = await conexion.connect();
@@ -108,6 +103,7 @@ const crearPago = async (peticion, respuesta) => {
 
     const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
 
+    // 1. Insertar exclusivamente en la tabla 'pago' respetando su esquema real
     const consultaInsertarPago = `
       INSERT INTO pago (
         codigo_reserva, 
@@ -115,11 +111,9 @@ const crearPago = async (peticion, respuesta) => {
         metodo_pago, 
         moneda, 
         monto, 
-        banco_destino, 
-        num_referencia, 
         descripcion
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *;
     `;
 
@@ -129,11 +123,25 @@ const crearPago = async (peticion, respuesta) => {
       metodo_pago.trim(),
       moneda.trim(),
       monto,
-      banco_destino ? banco_destino.trim() : null,
-      num_referencia ? num_referencia.trim() : null,
       descripcion.trim()
     ]);
 
+    const idPagoGenerado = resultadoPago.rows[0]?.id_pago;
+
+    // 2. Si seleccionó un banco, registrar la transacción bancaria asociada
+    if (id_banco_destino && idPagoGenerado) {
+      await cliente.query(`
+        INSERT INTO transaccion_bancaria (id_pago, id_banco_origen, id_banco_destino, num_referencia)
+        VALUES ($1, $2, $3, $4);
+      `, [
+        idPagoGenerado,
+        id_banco_destino, 
+        id_banco_destino,
+        num_referencia ? num_referencia.trim() : `REF-${Date.now()}`
+      ]);
+    }
+
+    // 3. Actualizar el acumulado pagado en la reserva
     const consultaActualizarReserva = `
       UPDATE reserva
       SET monto_pagado = monto_pagado + $1
@@ -147,7 +155,7 @@ const crearPago = async (peticion, respuesta) => {
 
     await registrarAuditoria(
       idUsuarioResponsable, 
-      'Finanzas', 
+      4, 
       `Registró un pago de ${monto} ${moneda.trim()} (${metodo_pago.trim()}) para la reserva N° ${codigo_reserva} del huésped "${nombreHuesped}"`
     );
 
@@ -159,15 +167,12 @@ const crearPago = async (peticion, respuesta) => {
   } catch (error) {
     await cliente.query('ROLLBACK');
     console.error('Error al registrar el pago:', error);
-    return respuesta.status(500).json({ 
-      mensaje: 'Error interno al intentar guardar el pago en la base de datos.' 
-    });
+    return respuesta.status(500).json({ mensaje: 'Error interno al intentar guardar el pago en la base de datos.' });
   } finally {
     cliente.release();
   }
 };
 
-// Eliminar un pago y descontar de la reserva
 const eliminarPago = async (peticion, respuesta) => {
   const { id } = peticion.params;
   const cliente = await conexion.connect();
@@ -189,7 +194,6 @@ const eliminarPago = async (peticion, respuesta) => {
     }
 
     const { codigo_reserva, monto, moneda, nombre_huesped } = consultaPago.rows[0];
-    
     let montoEnUSD = Number(monto);
     if (moneda.toUpperCase() === 'VES') {
       montoEnUSD = Number(monto) / 872.39; 
@@ -203,12 +207,11 @@ const eliminarPago = async (peticion, respuesta) => {
     );
 
     const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
-
     await cliente.query('COMMIT');
 
     await registrarAuditoria(
       idUsuarioResponsable, 
-      'Finanzas', 
+      4, 
       `Eliminó el registro de pago de ${monto} ${moneda} correspondiente a la reserva N° ${codigo_reserva} de "${nombre_huesped}"`
     );
 

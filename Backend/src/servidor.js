@@ -16,6 +16,7 @@ const rutasPagos = require('./rutas/rutas_pagos');
 const rutasEmergencia = require('./rutas/rutas_emergencia');
 const rutasAuditoria = require('./rutas/rutas_auditoria');
 const rutasTemporadas = require('./rutas/rutas_temporadas');
+const rutasBancos = require('./rutas/rutas_bancos');
 
 
 const aplicacion = express();
@@ -39,6 +40,7 @@ aplicacion.use('/api/pagos', rutasPagos);
 aplicacion.use('/api/emergencia', rutasEmergencia);
 aplicacion.use('/api/auditoria', rutasAuditoria);
 aplicacion.use('/api/temporadas', rutasTemporadas);
+aplicacion.use('/api/bancos', rutasBancos);
 
 // Ruta base de prueba
 aplicacion.get('/', (peticion, respuesta) => {
