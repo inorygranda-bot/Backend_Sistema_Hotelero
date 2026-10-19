@@ -1,7 +1,7 @@
 const conexion = require('../config/conexion');
 const { registrarAuditoria } = require('./controlador_auditoria');
 
-// 1. Obtener todas las tarifas con su temporada y habitación vinculada
+// 1. Obtener todas las tarifas con sus temporadas y habitaciones vinculadas
 const obtenerTarifas = async (peticion, respuesta) => {
   try {
     const consultaSQL = `
@@ -14,23 +14,32 @@ const obtenerTarifas = async (peticion, respuesta) => {
         COALESCE(t.estado, 'Activa') AS estado,
         COALESCE(t.iva, 16) AS iva,
         COALESCE(t.huesped_adicional, 0) AS huesped_adicional,
-        tp.id_temporada,
-        tp.nombre_temporada,
-        tp.dia_inicio,
-        tp.mes_inicio,
-        tp.dia_fin,
-        tp.mes_fin,
+        COALESCE(
+          json_agg(DISTINCT jsonb_build_object('id_temporada', tp.id_temporada, 'nombre_temporada', tp.nombre_temporada, 'fecha_inicio', tp.fecha_inicio, 'fecha_fin', tp.fecha_fin)) 
+          FILTER (WHERE tp.id_temporada IS NOT NULL), '[]'
+        ) AS temporadas,
         thab.id_tipo_habitacion,
         COALESCE(thab.nombre_tipo, 'Sin asignar') AS nombre_habitacion
       FROM tarifa t
-      JOIN temporada tp ON t.id_temporada = tp.id_temporada
+      LEFT JOIN tarifa_temporada tt ON t.id_tarifa = tt.id_tarifa
+      LEFT JOIN temporada tp ON tt.id_temporada = tp.id_temporada
       LEFT JOIN tarifa_hab th ON t.id_tarifa = th.id_tarifa
       LEFT JOIN tipo_habitacion thab ON th.id_tipo_hab = thab.id_tipo_habitacion
+      GROUP BY t.id_tarifa, thab.id_tipo_habitacion, thab.nombre_tipo
       ORDER BY t.id_tarifa ASC;
     `;
 
     const resultado = await conexion.query(consultaSQL);
-    return respuesta.status(200).json(resultado.rows);
+    
+    // Mapeo para formatear temporadas como texto y arreglo para la interfaz
+    const tarifasMapeadas = resultado.rows.map(row => ({
+      ...row,
+      id_temporada: row.temporadas[0]?.id_temporada || null,
+      nombre_temporada: row.temporadas.map(tp => tp.nombre_temporada).join(', ') || 'Sin temporada',
+      id_temporadas: row.temporadas.map(tp => tp.id_temporada)
+    }));
+
+    return respuesta.status(200).json(tarifasMapeadas);
   } catch (error) {
     console.error('Error al obtener tarifas:', error);
     return respuesta.status(500).json({ 
@@ -54,19 +63,19 @@ const obtenerTarifaPorId = async (peticion, respuesta) => {
         COALESCE(t.estado, 'Activa') AS estado,
         COALESCE(t.iva, 16) AS iva,
         COALESCE(t.huesped_adicional, 0) AS huesped_adicional,
-        tp.id_temporada,
-        tp.nombre_temporada,
-        tp.dia_inicio,
-        tp.mes_inicio,
-        tp.dia_fin,
-        tp.mes_fin,
+        COALESCE(
+          json_agg(DISTINCT jsonb_build_object('id_temporada', tp.id_temporada, 'nombre_temporada', tp.nombre_temporada, 'fecha_inicio', tp.fecha_inicio, 'fecha_fin', tp.fecha_fin)) 
+          FILTER (WHERE tp.id_temporada IS NOT NULL), '[]'
+        ) AS temporadas,
         thab.id_tipo_habitacion,
         COALESCE(thab.nombre_tipo, 'Sin asignar') AS nombre_habitacion
       FROM tarifa t
-      JOIN temporada tp ON t.id_temporada = tp.id_temporada
+      LEFT JOIN tarifa_temporada tt ON t.id_tarifa = tt.id_tarifa
+      LEFT JOIN temporada tp ON tt.id_temporada = tp.id_temporada
       LEFT JOIN tarifa_hab th ON t.id_tarifa = th.id_tarifa
       LEFT JOIN tipo_habitacion thab ON th.id_tipo_hab = thab.id_tipo_habitacion
-      WHERE t.id_tarifa = $1;
+      WHERE t.id_tarifa = $1
+      GROUP BY t.id_tarifa, thab.id_tipo_habitacion, thab.nombre_tipo;
     `;
 
     const resultado = await conexion.query(consultaSQL, [id]);
@@ -75,7 +84,15 @@ const obtenerTarifaPorId = async (peticion, respuesta) => {
       return respuesta.status(404).json({ mensaje: 'Tarifa no encontrada.' });
     }
 
-    return respuesta.status(200).json(resultado.rows[0]);
+    const row = resultado.rows[0];
+    const tarifaFormateada = {
+      ...row,
+      id_temporada: row.temporadas[0]?.id_temporada || null,
+      nombre_temporada: row.temporadas.map(tp => tp.nombre_temporada).join(', ') || 'Sin temporada',
+      id_temporadas: row.temporadas.map(tp => tp.id_temporada)
+    };
+
+    return respuesta.status(200).json(tarifaFormateada);
   } catch (error) {
     console.error(`Error al obtener tarifa ID ${id}:`, error);
     return respuesta.status(500).json({ mensaje: 'Error al obtener los datos de la tarifa.' });
@@ -106,19 +123,52 @@ const obtenerTemporadas = async (peticion, respuesta) => {
   }
 };
 
-const crearTemporada = async (peticion, respuesta) => {
-  const { nombre_temporada, dia_inicio, mes_inicio, dia_fin, mes_fin, descripcion } = peticion.body;
+const guardarCalendarioTemporadas = async (peticion, respuesta) => {
+  const { temporadas_altas } = peticion.body; // Recibe un array de temporadas altas configuradas
+  const idUsuario = peticion.body.id_usuario || peticion.query.id_usuario || 1;
 
-  if (!nombre_temporada || !dia_inicio || !mes_inicio || !dia_fin || !mes_fin) {
+  try {
+    
+    for (const temp of temporadas_altas) {
+      const inicioMMDD = temp.fecha_inicio.slice(5, 10);
+      const finMMDD = temp.fecha_fin.slice(5, 10);
+      
+      await conexion.query(`
+        INSERT INTO temporada (nombre_temporada, fecha_inicio, fecha_fin, descripcion)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (nombre_temporada) DO UPDATE 
+        SET fecha_inicio = EXCLUDED.fecha_inicio, fecha_fin = EXCLUDED.fecha_fin, descripcion = EXCLUDED.descripcion;
+      `, [temp.nombre_temporada.trim(), inicioMMDD, finMMDD, temp.descripcion || 'Temporada Alta']);
+    }
+
+    await conexion.query(`
+      INSERT INTO temporada (nombre_temporada, fecha_inicio, fecha_fin, descripcion)
+      VALUES ('Temporada Baja (General)', '01-01', '12-31', 'Asignada automáticamente por el sistema para fechas no cubiertas en alta')
+      ON CONFLICT (nombre_temporada) DO NOTHING;
+    `);
+
+    await registrarAuditoria(idUsuario, 6, 'Actualizó el calendario anual de temporadas y autocompletó temporada baja');
+
+    return respuesta.status(200).json({ mensaje: 'Calendario de temporadas guardado y temporada baja autocompletada con éxito.' });
+  } catch (error) {
+    console.error('Error al guardar calendario:', error);
+    return respuesta.status(500).json({ mensaje: 'Error interno al procesar el calendario de temporadas.' });
+  }
+};
+
+const crearTemporada = async (peticion, respuesta) => {
+  const { nombre_temporada, fecha_inicio, fecha_fin, descripcion } = peticion.body;
+
+  if (!nombre_temporada || !fecha_inicio || !fecha_fin) {
     return respuesta.status(400).json({ mensaje: 'Todos los campos de fecha de la temporada son obligatorios.' });
   }
 
   try {
     const resultado = await conexion.query(`
-      INSERT INTO temporada (nombre_temporada, dia_inicio, mes_inicio, dia_fin, mes_fin, descripcion)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO temporada (nombre_temporada, fecha_inicio, fecha_fin, descripcion)
+      VALUES ($1, $2, $3, $4)
       RETURNING *;
-    `, [nombre_temporada.trim(), dia_inicio, mes_inicio, dia_fin, mes_fin, descripcion ? descripcion.trim() : '']);
+    `, [nombre_temporada.trim(), fecha_inicio, fecha_fin, descripcion ? descripcion.trim() : '']);
 
     const idUsuario = peticion.body.id_usuario || peticion.query.id_usuario || 1;
     await registrarAuditoria(idUsuario, 6, `Creó la temporada "${nombre_temporada.trim()}"`);
@@ -133,11 +183,12 @@ const crearTemporada = async (peticion, respuesta) => {
   }
 };
 
-// 5. Crear una nueva tarifa
+// 5. Crear una nueva tarifa (Validando duplicados por tipo de habitación y temporada)
 const crearTarifa = async (peticion, respuesta) => {
   const { 
     nombre_tarifa, 
     id_temporada,
+    id_temporadas,
     id_tipo_habitacion, 
     precio_base, 
     iva, 
@@ -147,9 +198,16 @@ const crearTarifa = async (peticion, respuesta) => {
     estado 
   } = peticion.body;
 
-  if (!nombre_tarifa || !id_temporada || !id_tipo_habitacion) {
+  let temporadasArray = [];
+  if (Array.isArray(id_temporadas)) {
+    temporadasArray = id_temporadas;
+  } else if (id_temporada) {
+    temporadasArray = [id_temporada];
+  }
+
+  if (!nombre_tarifa || temporadasArray.length === 0 || !id_tipo_habitacion) {
     return respuesta.status(400).json({
-      mensaje: 'El nombre de la tarifa, la temporada y la habitación son obligatorios.'
+      mensaje: 'El nombre de la tarifa, al menos una temporada y la habitación son obligatorios.'
     });
   }
 
@@ -158,9 +216,26 @@ const crearTarifa = async (peticion, respuesta) => {
   try {
     await cliente.query('BEGIN');
 
+    // VALIDACIÓN: Verificar si ya existe una tarifa para este tipo de habitación en cualquiera de las temporadas seleccionadas
+    for (const idTemp of temporadasArray) {
+      const duplicadaCheck = await cliente.query(`
+        SELECT t.nombre_tarifa 
+        FROM tarifa t
+        JOIN tarifa_temporada tt ON t.id_tarifa = tt.id_tarifa
+        JOIN tarifa_hab th ON t.id_tarifa = th.id_tarifa
+        WHERE tt.id_temporada = $1 AND th.id_tipo_hab = $2
+      `, [parseInt(idTemp), parseInt(id_tipo_habitacion)]);
+
+      if (duplicadaCheck.rows.length > 0) {
+        await cliente.query('ROLLBACK');
+        return respuesta.status(400).json({
+          mensaje: `Ya existe una tarifa definida ("${duplicadaCheck.rows[0].nombre_tarifa}") para este tipo de habitación en la temporada seleccionada.`
+        });
+      }
+    }
+
     const consultaTarifa = `
       INSERT INTO tarifa (
-        id_temporada,
         nombre_tarifa, 
         ocupacion_base, 
         incluye, 
@@ -169,12 +244,11 @@ const crearTarifa = async (peticion, respuesta) => {
         iva, 
         huesped_adicional
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING id_tarifa;
     `;
 
     const resultadoTarifa = await cliente.query(consultaTarifa, [
-      parseInt(id_temporada),
       nombre_tarifa.trim(),
       parseInt(ocupacion_base) || 1,
       incluye ? incluye.trim() : '',
@@ -186,28 +260,25 @@ const crearTarifa = async (peticion, respuesta) => {
 
     const idNuevaTarifa = resultadoTarifa.rows[0].id_tarifa;
 
-    let nombreHabitacion = 'Habitación General';
+    // Vincular temporadas
+    for (const idTemp of temporadasArray) {
+      await cliente.query(`
+        INSERT INTO tarifa_temporada (id_tarifa, id_temporada)
+        VALUES ($1, $2)
+        ON CONFLICT (id_tarifa, id_temporada) DO NOTHING;
+      `, [idNuevaTarifa, parseInt(idTemp)]);
+    }
+
+    // Vincular habitación
     if (id_tipo_habitacion) {
       await cliente.query(`
         INSERT INTO tarifa_hab (id_tarifa, id_tipo_hab)
         VALUES ($1, $2)
         ON CONFLICT (id_tarifa, id_tipo_hab) DO NOTHING;
       `, [idNuevaTarifa, parseInt(id_tipo_habitacion)]);
-
-      const tipoHabRes = await cliente.query('SELECT nombre_tipo FROM tipo_habitacion WHERE id_tipo_habitacion = $1', [parseInt(id_tipo_habitacion)]);
-      if (tipoHabRes.rows.length > 0) {
-        nombreHabitacion = tipoHabRes.rows[0].nombre_tipo;
-      }
     }
 
     await cliente.query('COMMIT');
-
-    const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
-    await registrarAuditoria(
-      idUsuarioResponsable, 
-      6, 
-      `Creó la tarifa comercial "${nombre_tarifa.trim()}" asignada a ${nombreHabitacion} con precio base de $${parseFloat(precio_base || 0).toFixed(2)}`
-    );
 
     return respuesta.status(201).json({
       mensaje: 'Tarifa registrada exitosamente.',
@@ -224,12 +295,13 @@ const crearTarifa = async (peticion, respuesta) => {
   }
 };
 
-// 6. Actualizar tarifa existente
+// 6. Actualizar tarifa existente (Validando duplicados excluyendo la misma tarifa)
 const actualizarTarifa = async (peticion, respuesta) => {
   const { id } = peticion.params;
   const { 
     nombre_tarifa, 
     id_temporada,
+    id_temporadas,
     id_tipo_habitacion, 
     precio_base, 
     iva, 
@@ -239,9 +311,16 @@ const actualizarTarifa = async (peticion, respuesta) => {
     estado 
   } = peticion.body;
 
-  if (!nombre_tarifa || !id_temporada || !id_tipo_habitacion) {
+  let temporadasArray = [];
+  if (Array.isArray(id_temporadas)) {
+    temporadasArray = id_temporadas;
+  } else if (id_temporada) {
+    temporadasArray = [id_temporada];
+  }
+
+  if (!nombre_tarifa || temporadasArray.length === 0 || !id_tipo_habitacion) {
     return respuesta.status(400).json({
-      mensaje: 'El nombre de la tarifa, la temporada y la habitación son obligatorios.'
+      mensaje: 'El nombre de la tarifa, al menos una temporada y la habitación son obligatorios.'
     });
   }
 
@@ -250,10 +329,27 @@ const actualizarTarifa = async (peticion, respuesta) => {
   try {
     await cliente.query('BEGIN');
 
+    // VALIDACIÓN: Verificar si ya existe OTRA tarifa con el mismo tipo de habitación y temporada
+    for (const idTemp of temporadasArray) {
+      const duplicadaCheck = await cliente.query(`
+        SELECT t.nombre_tarifa 
+        FROM tarifa t
+        JOIN tarifa_temporada tt ON t.id_tarifa = tt.id_tarifa
+        JOIN tarifa_hab th ON t.id_tarifa = th.id_tarifa
+        WHERE tt.id_temporada = $1 AND th.id_tipo_hab = $2 AND t.id_tarifa != $3
+      `, [parseInt(idTemp), parseInt(id_tipo_habitacion), parseInt(id)]);
+
+      if (duplicadaCheck.rows.length > 0) {
+        await cliente.query('ROLLBACK');
+        return respuesta.status(400).json({
+          mensaje: `Ya existe otra tarifa definida ("${duplicadaCheck.rows[0].nombre_tarifa}") para este tipo de habitación en la temporada seleccionada.`
+        });
+      }
+    }
+
     const tarifaAnteriorRes = await cliente.query(`
-      SELECT t.*, thab.nombre_tipo AS nombre_habitacion, tp.nombre_temporada
+      SELECT t.*, thab.nombre_tipo AS nombre_habitacion
       FROM tarifa t
-      JOIN temporada tp ON t.id_temporada = tp.id_temporada
       LEFT JOIN tarifa_hab th ON t.id_tarifa = th.id_tarifa
       LEFT JOIN tipo_habitacion thab ON th.id_tipo_hab = thab.id_tipo_habitacion
       WHERE t.id_tarifa = $1;
@@ -277,19 +373,17 @@ const actualizarTarifa = async (peticion, respuesta) => {
     const consultaUpdate = `
       UPDATE tarifa
       SET 
-        id_temporada = $1,
-        nombre_tarifa = $2,
-        ocupacion_base = $3,
-        incluye = $4,
-        precio_base = $5,
-        estado = $6,
-        iva = $7,
-        huesped_adicional = $8
-      WHERE id_tarifa = $9;
+        nombre_tarifa = $1,
+        ocupacion_base = $2,
+        incluye = $3,
+        precio_base = $4,
+        estado = $5,
+        iva = $6,
+        huesped_adicional = $7
+      WHERE id_tarifa = $8;
     `;
 
     await cliente.query(consultaUpdate, [
-      parseInt(id_temporada),
       nombre_tarifa.trim(),
       parseInt(ocupacion_base) || 1,
       incluye ? incluye.trim() : '',
@@ -300,6 +394,17 @@ const actualizarTarifa = async (peticion, respuesta) => {
       id
     ]);
 
+    // Actualizar temporadas asociadas
+    await cliente.query('DELETE FROM tarifa_temporada WHERE id_tarifa = $1', [id]);
+    for (const idTemp of temporadasArray) {
+      await cliente.query(`
+        INSERT INTO tarifa_temporada (id_tarifa, id_temporada)
+        VALUES ($1, $2)
+        ON CONFLICT (id_tarifa, id_temporada) DO NOTHING;
+      `, [id, parseInt(idTemp)]);
+    }
+
+    // Actualizar habitación asociada
     await cliente.query('DELETE FROM tarifa_hab WHERE id_tarifa = $1', [id]);
     if (id_tipo_habitacion) {
       await cliente.query(`
@@ -344,13 +449,31 @@ const actualizarTarifa = async (peticion, respuesta) => {
   }
 };
 
-// 7. Eliminar tarifa
 const eliminarTarifa = async (peticion, respuesta) => {
   const { id } = peticion.params;
   const cliente = await conexion.connect();
 
   try {
     await cliente.query('BEGIN');
+
+    // 1. Verificar si la tarifa está asociada a la "Temporada normal" o "Temporada Baja"
+    const temporadaAsociadaRes = await cliente.query(`
+      SELECT tp.nombre_temporada, t.nombre_tarifa
+      FROM tarifa t
+      JOIN tarifa_temporada tt ON t.id_tarifa = tt.id_tarifa
+      JOIN temporada tp ON tt.id_temporada = tp.id_temporada
+      WHERE t.id_tarifa = $1;
+    `, [id]);
+
+    for (const row of temporadaAsociadaRes.rows) {
+      const nombreTemp = row.nombre_temporada.toLowerCase();
+      if (nombreTemp.includes('temporada normal') || nombreTemp.includes('temporada baja')) {
+        await cliente.query('ROLLBACK');
+        return respuesta.status(400).json({
+          mensaje: `No se puede eliminar la tarifa "${row.nombre_tarifa}" porque está vinculada a una temporada base protegida (${row.nombre_temporada}).`
+        });
+      }
+    }
 
     const tarifaInfoRes = await cliente.query(`
       SELECT t.nombre_tarifa, thab.nombre_tipo AS nombre_habitacion
@@ -363,6 +486,7 @@ const eliminarTarifa = async (peticion, respuesta) => {
     const tarifaInfo = tarifaInfoRes.rows[0];
     const nombreTarifaEliminada = tarifaInfo ? tarifaInfo.nombre_tarifa : 'una tarifa';
 
+    await cliente.query('DELETE FROM tarifa_temporada WHERE id_tarifa = $1', [id]);
     await cliente.query('DELETE FROM tarifa_hab WHERE id_tarifa = $1', [id]);
     const resultado = await cliente.query('DELETE FROM tarifa WHERE id_tarifa = $1 RETURNING id_tarifa', [id]);
 
@@ -409,7 +533,6 @@ const duplicarTarifa = async (peticion, respuesta) => {
 
     const insRes = await cliente.query(`
       INSERT INTO tarifa (
-        id_temporada,
         nombre_tarifa, 
         ocupacion_base, 
         incluye, 
@@ -418,10 +541,9 @@ const duplicarTarifa = async (peticion, respuesta) => {
         iva, 
         huesped_adicional
       )
-      VALUES ($1, $2, $3, $4, $5, 'Borrador', $6, $7)
+      VALUES ($1, $2, $3, $4, 'Borrador', $5, $6)
       RETURNING id_tarifa;
     `, [
-      orig.id_temporada,
       nuevoNombre,
       orig.ocupacion_base,
       orig.incluye,
@@ -432,6 +554,17 @@ const duplicarTarifa = async (peticion, respuesta) => {
 
     const nuevaId = insRes.rows[0].id_tarifa;
 
+    // Copiar temporadas asociadas
+    const tempsRes = await cliente.query('SELECT id_temporada FROM tarifa_temporada WHERE id_tarifa = $1', [id]);
+    for (const tRow of tempsRes.rows) {
+      await cliente.query(`
+        INSERT INTO tarifa_temporada (id_tarifa, id_temporada)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING;
+      `, [nuevaId, tRow.id_temporada]);
+    }
+
+    // Copiar habitación asociada
     const habRes = await cliente.query('SELECT id_tipo_hab FROM tarifa_hab WHERE id_tarifa = $1', [id]);
     if (habRes.rows.length > 0) {
       await cliente.query(`

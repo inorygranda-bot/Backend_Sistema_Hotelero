@@ -3,14 +3,13 @@ const bcrypt = require('bcrypt');
 const axios = require('axios');
 const { registrarAuditoria } = require('./controlador_auditoria');
 
-// Obtener huéspedes activos (Check-in) con su estado de seguridad si la tabla lo soporta
 const obtenerHuespedesActivosEmergencia = async (peticion, respuesta) => {
   try {
     const consultaSQL = `
       SELECT 
         h.id_huesped,
         h.nombre,
-        COALESCE(dh.num_documento, 'S/D') AS num_documento,
+        COALESCE(h.num_documento, 'S/D') AS num_documento,
         r.codigo_habitacion,
         COALESCE(hab.piso, 'S/P') AS piso,
         h.telefono,
@@ -18,7 +17,6 @@ const obtenerHuespedesActivosEmergencia = async (peticion, respuesta) => {
         r.estado AS estado_reserva
       FROM reserva r
       JOIN huesped h ON r.id_huesped = h.id_huesped
-      LEFT JOIN documento_huesped dh ON h.id_huesped = dh.id_huesped
       LEFT JOIN habitacion hab ON r.codigo_habitacion = hab.codigo_habitacion
       WHERE r.estado = 'CHECKIN'
       ORDER BY r.codigo_habitacion ASC;
@@ -32,133 +30,6 @@ const obtenerHuespedesActivosEmergencia = async (peticion, respuesta) => {
   }
 };
 
-// Consultar el estado actual de la emergencia de forma segura
-const obtenerEstadoEmergencia = async (peticion, respuesta) => {
-  try {
-    const consultaSQL = `
-      SELECT el.estado, el.mensaje_emitido, el.fecha_hora_activacion, COALESCE(u.nombre, 'Sistema') AS usuario_activo
-      FROM emergencia_log el
-      LEFT JOIN usuario u ON el.id_usuario = u.id_usuario
-      ORDER BY el.id_emergencia DESC
-      LIMIT 1;
-    `;
-    const resultado = await conexion.query(consultaSQL);
-
-    if (resultado.rows.length === 0) {
-      return respuesta.status(200).json({ estado: 'NORMAL' });
-    }
-
-    return respuesta.status(200).json(resultado.rows[0]);
-  } catch (error) {
-    console.error('Error al obtener estado de emergencia:', error);
-    return respuesta.status(200).json({ estado: 'NORMAL' });
-  }
-};
-
-// Activar emergencia y registrar usuario responsable
-const activarEmergencia = async (peticion, respuesta) => {
-  const { id_usuario, contrasenna_admin } = peticion.body;
-
-  if (!id_usuario || !contrasenna_admin) {
-    return respuesta.status(400).json({ mensaje: 'Faltan datos obligatorios para activar la emergencia.' });
-  }
-
-  try {
-    const consultaUsuario = `
-      SELECT u.id_usuario, u.nombre, u.contrasenna, r.nombre AS nombre_rol
-      FROM usuario u
-      JOIN rol r ON u.id_rol = r.id_rol
-      WHERE u.id_usuario = $1 AND u.estado = 'ACTIVO';
-    `;
-    const resultadoUsuario = await conexion.query(consultaUsuario, [id_usuario]);
-
-    if (resultadoUsuario.rows.length === 0) {
-      return respuesta.status(404).json({ mensaje: 'Usuario no encontrado o inactivo.' });
-    }
-
-    const usuarioAccion = resultadoUsuario.rows[0];
-
-    const consultaAdmin = `
-      SELECT u.id_usuario, u.contrasenna 
-      FROM usuario u
-      JOIN rol r ON u.id_rol = r.id_rol
-      WHERE r.nombre = 'Administrador General' AND u.estado = 'ACTIVO'
-      LIMIT 1;
-    `;
-    const resultadoAdmin = await conexion.query(consultaAdmin);
-
-    if (resultadoAdmin.rows.length === 0) {
-      return respuesta.status(500).json({ mensaje: 'No se encontró un administrador activo en el sistema.' });
-    }
-
-    const adminSistema = resultadoAdmin.rows[0];
-    const contrasennaValida = await bcrypt.compare(contrasenna_admin, adminSistema.contrasenna);
-    
-    if (!contrasennaValida) {
-      return respuesta.status(401).json({ mensaje: 'Contraseña de administrador incorrecta.' });
-    }
-
-    const consultaLog = `
-      INSERT INTO emergencia_log (id_usuario, estado, mensaje_emitido)
-      VALUES ($1, 'ALERTA', 'No se ha enviado ningun mensaje')
-      RETURNING *;
-    `;
-    const resultadoLog = await conexion.query(consultaLog, [usuarioAccion.id_usuario]);
-
-    // ✅ REGISTRAR EN AUDITORÍA CON EL NOMBRE DEL USUARIO
-    await registrarAuditoria(
-      usuarioAccion.id_usuario, 
-      'Control de emergencia', 
-      `El usuario ${usuarioAccion.nombre} activó la alerta de seguridad y evacuación del sistema`
-    );
-
-    return respuesta.status(201).json({
-      mensaje: 'Estado de emergencia activado y registrado exitosamente.',
-      emergencia: resultadoLog.rows[0]
-    });
-  } catch (error) {
-    console.error('Error al activar emergencia:', error);
-    return respuesta.status(500).json({ mensaje: 'Error interno en el servidor.' });
-  }
-};
-
-// Desactivar emergencia registrando el usuario que normalizó
-const desactivarEmergencia = async (peticion, respuesta) => {
-  const { id_usuario } = peticion.body;
-
-  if (!id_usuario) {
-    return respuesta.status(400).json({ mensaje: 'ID de usuario obligatorio para normalizar el sistema.' });
-  }
-
-  try {
-    const usuarioRes = await conexion.query('SELECT nombre FROM usuario WHERE id_usuario = $1', [id_usuario]);
-    const nombreUsuario = usuarioRes.rows[0]?.nombre || 'Usuario';
-
-    const consultaLog = `
-      INSERT INTO emergencia_log (id_usuario, estado, mensaje_emitido)
-      VALUES ($1, 'NORMAL', 'Sistema normalizado y protocolos finalizados')
-      RETURNING *;
-    `;
-    const resultadoLog = await conexion.query(consultaLog, [id_usuario]);
-
-    // ✅ REGISTRAR EN AUDITORÍA
-    await registrarAuditoria(
-      id_usuario, 
-      'Control de emergencia', 
-      `El usuario ${nombreUsuario} normalizó el sistema y finalizó los protocolos de emergencia`
-    );
-
-    return respuesta.status(200).json({
-      mensaje: 'Sistema normalizado exitosamente.',
-      emergencia: resultadoLog.rows[0]
-    });
-  } catch (error) {
-    console.error('Error al desactivar emergencia:', error);
-    return respuesta.status(500).json({ mensaje: 'Error interno en el servidor.' });
-  }
-};
-
-// ENVÍO DE REPORTE A TELEGRAM Y REGISTRO DE AUDITORÍA
 const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
   const { mensaje, id_usuario } = peticion.body;
 
@@ -181,7 +52,6 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
         COALESCE(h.telefono, 'Sin Teléfono') AS telefono
       FROM reserva r
       JOIN huesped h ON r.id_huesped = h.id_huesped
-      LEFT JOIN documento_huesped dh ON h.id_huesped = dh.id_huesped
       LEFT JOIN habitacion hab ON r.codigo_habitacion = hab.codigo_habitacion
       WHERE r.estado = 'CHECKIN'
       ORDER BY r.codigo_habitacion ASC;
@@ -231,10 +101,9 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
     `;
     await conexion.query(actualizarLogSQL, [mensaje.trim()]);
 
-    // ✅ REGISTRAR EN AUDITORÍA
     await registrarAuditoria(
       id_usuario || 1, 
-      'Control de emergencia', 
+      8, 
       `El usuario ${nombreUsuario} transmitió reporte masivo de emergencia a Telegram (${huespedes.length} huéspedes censados)`
     );
 
@@ -247,7 +116,127 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
   }
 };
 
-// ✅ NUEVO ENDPOINT: Registrar en auditoría cuando se marca o desmarca a un huésped como seguro
+const obtenerEstadoEmergencia = async (peticion, respuesta) => {
+  try {
+    const consultaSQL = `
+      SELECT el.estado, el.mensaje_emitido, el.fecha_hora_activacion, COALESCE(u.nombre, 'Sistema') AS usuario_activo
+      FROM emergencia_log el
+      LEFT JOIN usuario u ON el.id_usuario = u.id_usuario
+      ORDER BY el.id_emergencia DESC
+      LIMIT 1;
+    `;
+    const resultado = await conexion.query(consultaSQL);
+
+    if (resultado.rows.length === 0) {
+      return respuesta.status(200).json({ estado: 'NORMAL' });
+    }
+
+    return respuesta.status(200).json(resultado.rows[0]);
+  } catch (error) {
+    console.error('Error al obtener estado de emergencia:', error);
+    return respuesta.status(200).json({ estado: 'NORMAL' });
+  }
+};
+
+const activarEmergencia = async (peticion, respuesta) => {
+  const { id_usuario, contrasenna_admin } = peticion.body;
+
+  if (!id_usuario || !contrasenna_admin) {
+    return respuesta.status(400).json({ mensaje: 'Faltan datos obligatorios para activar la emergencia.' });
+  }
+
+  try {
+    const consultaUsuario = `
+      SELECT u.id_usuario, u.nombre, u.contrasenna, r.nombre AS nombre_rol
+      FROM usuario u
+      JOIN rol r ON u.id_rol = r.id_rol
+      WHERE u.id_usuario = $1 AND u.estado = 'ACTIVO';
+    `;
+    const resultadoUsuario = await conexion.query(consultaUsuario, [id_usuario]);
+
+    if (resultadoUsuario.rows.length === 0) {
+      return respuesta.status(404).json({ mensaje: 'Usuario no encontrado o inactivo.' });
+    }
+
+    const usuarioAccion = resultadoUsuario.rows[0];
+
+    const consultaAdmin = `
+      SELECT u.id_usuario, u.contrasenna 
+      FROM usuario u
+      JOIN rol r ON u.id_rol = r.id_rol
+      WHERE r.nombre = 'Administrador General' AND u.estado = 'ACTIVO'
+      LIMIT 1;
+    `;
+    const resultadoAdmin = await conexion.query(consultaAdmin);
+
+    if (resultadoAdmin.rows.length === 0) {
+      return respuesta.status(500).json({ mensaje: 'No se encontró un administrador activo en el sistema.' });
+    }
+
+    const adminSistema = resultadoAdmin.rows[0];
+    const contrasennaValida = await bcrypt.compare(contrasenna_admin, adminSistema.contrasenna);
+    
+    if (!contrasennaValida) {
+      return respuesta.status(401).json({ mensaje: 'Contraseña de administrador incorrecta.' });
+    }
+
+    const consultaLog = `
+      INSERT INTO emergencia_log (id_usuario, estado, mensaje_emitido)
+      VALUES ($1, 'ALERTA', 'No se ha enviado ningun mensaje')
+      RETURNING *;
+    `;
+    const resultadoLog = await conexion.query(consultaLog, [usuarioAccion.id_usuario]);
+
+    await registrarAuditoria(
+      usuarioAccion.id_usuario, 
+      'Control de emergencia', 
+      `El usuario ${usuarioAccion.nombre} activó la alerta de seguridad y evacuación del sistema`
+    );
+
+    return respuesta.status(201).json({
+      mensaje: 'Estado de emergencia activado y registrado exitosamente.',
+      emergencia: resultadoLog.rows[0]
+    });
+  } catch (error) {
+    console.error('Error al activar emergencia:', error);
+    return respuesta.status(500).json({ mensaje: 'Error interno en el servidor.' });
+  }
+};
+
+const desactivarEmergencia = async (peticion, respuesta) => {
+  const { id_usuario } = peticion.body;
+
+  if (!id_usuario) {
+    return respuesta.status(400).json({ mensaje: 'ID de usuario obligatorio para normalizar el sistema.' });
+  }
+
+  try {
+    const usuarioRes = await conexion.query('SELECT nombre FROM usuario WHERE id_usuario = $1', [id_usuario]);
+    const nombreUsuario = usuarioRes.rows[0]?.nombre || 'Usuario';
+
+    const consultaLog = `
+      INSERT INTO emergencia_log (id_usuario, estado, mensaje_emitido)
+      VALUES ($1, 'NORMAL', 'Sistema normalizado y protocolos finalizados')
+      RETURNING *;
+    `;
+    const resultadoLog = await conexion.query(consultaLog, [id_usuario]);
+
+    await registrarAuditoria(
+      id_usuario, 
+      'Control de emergencia', 
+      `El usuario ${nombreUsuario} normalizó el sistema y finalizó los protocolos de emergencia`
+    );
+
+    return respuesta.status(200).json({
+      mensaje: 'Sistema normalizado exitosamente.',
+      emergencia: resultadoLog.rows[0]
+    });
+  } catch (error) {
+    console.error('Error al desactivar emergencia:', error);
+    return respuesta.status(500).json({ mensaje: 'Error interno en el servidor.' });
+  }
+};
+
 const registrarMarcajeHuespedSeguro = async (peticion, respuesta) => {
   const { id_usuario, id_huesped, seguro } = peticion.body;
 
@@ -272,7 +261,7 @@ const registrarMarcajeHuespedSeguro = async (peticion, respuesta) => {
 
     await registrarAuditoria(
       id_usuario || 1,
-      'Control de emergencia',
+      8, 
       `El usuario ${nombreUsuario} ${accionTexto}`
     );
 
@@ -289,5 +278,5 @@ module.exports = {
   activarEmergencia,
   desactivarEmergencia,
   enviarMensajeMasivoAlerta,
-  registrarMarcajeHuespedSeguro
+  registrarMarcajeHuespedSeguro 
 };

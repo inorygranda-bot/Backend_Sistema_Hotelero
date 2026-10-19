@@ -42,7 +42,7 @@ const obtenerReservas = async (peticion, respuesta) => {
     await actualizarEstadosAutomaticosPorFecha();
 
     const consultaSQL = `
-      SELECT 
+      SELECT DISTINCT ON (r.codigo_reserva)
         r.codigo_reserva,
         r.id_huesped,
         h.nombre AS nombre_huesped,
@@ -50,10 +50,10 @@ const obtenerReservas = async (peticion, respuesta) => {
         hab.piso,
         th.id_tipo_habitacion,
         th.nombre_tipo AS nombre_tipo_habitacion,
-        t.precio_base,
-        t.ocupacion_base,
-        t.huesped_adicional,
-        t.iva,
+        COALESCE(t.precio_base, 120.00) AS precio_base,
+        COALESCE(t.ocupacion_base, 2) AS ocupacion_base,
+        COALESCE(t.huesped_adicional, 15.00) AS huesped_adicional,
+        COALESCE(t.iva, 16.00) AS iva,
         r.id_usuario,
         r.fecha_checkin,
         r.fecha_checkout,
@@ -72,6 +72,8 @@ const obtenerReservas = async (peticion, respuesta) => {
       JOIN habitacion hab ON r.codigo_habitacion = hab.codigo_habitacion
       JOIN tipo_habitacion th ON hab.id_tipo_habitacion = th.id_tipo_habitacion
       LEFT JOIN tarifa_hab thab ON th.id_tipo_habitacion = thab.id_tipo_hab
+      LEFT JOIN tarifa_temporada tt ON thab.id_tarifa = tt.id_tarifa
+      LEFT JOIN temporada tp ON tt.id_temporada = tp.id_temporada
       LEFT JOIN tarifa t ON thab.id_tarifa = t.id_tarifa AND t.estado = 'Activa'
       ORDER BY r.codigo_reserva DESC;
     `;
@@ -116,7 +118,7 @@ const crearReserva = async (peticion, respuesta) => {
     await cliente.query('BEGIN');
 
     const consultaHabitacion = await cliente.query(
-      'SELECT estado, capacidad FROM habitacion WHERE codigo_habitacion = $1',
+      'SELECT capacidad FROM habitacion WHERE codigo_habitacion = $1',
       [codigo_habitacion]
     );
 
@@ -126,13 +128,6 @@ const crearReserva = async (peticion, respuesta) => {
     }
 
     const habInfo = consultaHabitacion.rows[0];
-    if (habInfo.estado.toLowerCase() !== 'disponible') {
-      await cliente.query('ROLLBACK');
-      return respuesta.status(400).json({
-        mensaje: `No se puede reservar. La habitación N° ${codigo_habitacion} se encuentra en estado "${habInfo.estado}".`
-      });
-    }
-
     if (parseInt(cantidad_huespedes) > parseInt(habInfo.capacidad)) {
       await cliente.query('ROLLBACK');
       return respuesta.status(400).json({
@@ -393,7 +388,10 @@ const obtenerReservaPorId = async (peticion, respuesta) => {
         h.nombre AS nombre_huesped,
         hab.piso,
         th.nombre_tipo AS nombre_tipo_habitacion,
-        t.precio_base, t.ocupacion_base, t.huesped_adicional, t.iva,
+        COALESCE(t.precio_base, 120.00) AS precio_base, 
+        COALESCE(t.ocupacion_base, 2) AS ocupacion_base, 
+        COALESCE(t.huesped_adicional, 15.00) AS huesped_adicional, 
+        COALESCE(t.iva, 16.00) AS iva,
         COALESCE(
           (SELECT json_agg(json_build_object('id_recargo', rec.id_recargo, 'motivo_recargo', rec.motivo_recargo, 'tipo_operacion', rec.tipo_operacion, 'tipo_calculo', rec.tipo_calculo, 'monto', rec.monto))
            FROM reserva_recargo rr 
@@ -455,29 +453,30 @@ const cambiarEstadoReserva = async (peticion, respuesta) => {
 
 const eliminarReserva = async (peticion, respuesta) => {
   const { id } = peticion.params;
+  const cliente = await conexion.connect();
   try {
-    await conexion.query('BEGIN;');
+    await cliente.query('BEGIN;');
     
-    const reservaInfo = await conexion.query(`
+    const reservaInfo = await cliente.query(`
       SELECT h.nombre AS nombre_huesped 
       FROM reserva r
       JOIN huesped h ON r.id_huesped = h.id_huesped
       WHERE r.codigo_reserva = $1
     `, [id]);
 
-    const nombreHuesped = reservaInfo.rows[0]?.nombre || 'Huésped';
+    const nombreHuesped = reservaInfo.rows[0]?.nombre_huesped || 'Huésped';
 
-    await conexion.query('DELETE FROM pago WHERE codigo_reserva = $1;', [id]);
-    await conexion.query('DELETE FROM reserva_recargo WHERE codigo_reserva = $1;', [id]);
+    await cliente.query('DELETE FROM pago WHERE codigo_reserva = $1;', [id]);
+    await cliente.query('DELETE FROM reserva_recargo WHERE codigo_reserva = $1;', [id]);
     
-    const resultado = await conexion.query('DELETE FROM reserva WHERE codigo_reserva = $1 RETURNING *;', [id]);
+    const resultado = await cliente.query('DELETE FROM reserva WHERE codigo_reserva = $1 RETURNING *;', [id]);
     
     if (resultado.rowCount === 0) {
-      await conexion.query('ROLLBACK;');
+      await cliente.query('ROLLBACK;');
       return respuesta.status(404).json({ mensaje: 'Reserva no encontrada.' });
     }
 
-    await conexion.query('COMMIT;');
+    await cliente.query('COMMIT;');
 
     const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
     await registrarAuditoria(
@@ -488,9 +487,11 @@ const eliminarReserva = async (peticion, respuesta) => {
 
     return respuesta.status(200).json({ mensaje: 'Reserva eliminada con éxito.' });
   } catch (error) {
-    await conexion.query('ROLLBACK;');
+    await cliente.query('ROLLBACK;');
     console.error('Error al eliminar reserva:', error);
     return respuesta.status(500).json({ mensaje: 'Error al eliminar la reserva.' });
+  } finally {
+    cliente.release();
   }
 };
 

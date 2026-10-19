@@ -8,7 +8,7 @@ const obtenerAuditoria = async (peticion, respuesta) => {
         a.id_usuario,
         COALESCE(u.nombre, 'Sistema / Desconocido') AS nombre_usuario,
         COALESCE(u.correo, 'N/A') AS correo_usuario,
-        a.modulo,
+        a.id_modulo,
         a.fecha_hora AS fecha_accion,
         a.accion AS descripcion
       FROM auditoria a
@@ -23,14 +23,20 @@ const obtenerAuditoria = async (peticion, respuesta) => {
   }
 };
 
-const registrarAuditoria = async (id_usuario, modulo, accion) => {
+const registrarAuditoria = async (id_usuario, id_modulo, accion) => {
   try {
-    const usuarioValido = id_usuario ? parseInt(id_usuario) : 1;
+    const usuarioValido = (id_usuario && !isNaN(parseInt(id_usuario))) ? parseInt(id_usuario) : 1;
+    // Si id_modulo llega como texto o número, lo manejamos de forma segura (8 es Control de Emergencia)
+    let moduloValido = 8;
+    if (id_modulo && !isNaN(parseInt(id_modulo))) {
+      moduloValido = parseInt(id_modulo);
+    }
+
     const consultaSQL = `
-      INSERT INTO auditoria (id_usuario, modulo, accion)
+      INSERT INTO auditoria (id_usuario, id_modulo, accion)
       VALUES ($1, $2, $3);
     `;
-    await conexion.query(consultaSQL, [usuarioValido, modulo, accion]);
+    await conexion.query(consultaSQL, [usuarioValido, moduloValido, accion]);
   } catch (error) {
     console.error('Error al registrar evento en auditoría:', error);
   }

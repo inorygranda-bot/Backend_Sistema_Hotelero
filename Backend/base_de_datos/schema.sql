@@ -82,17 +82,14 @@ CREATE TABLE IF NOT EXISTS "banco" (
 CREATE TABLE IF NOT EXISTS "temporada" (
 	"id_temporada" serial NOT NULL,
 	"nombre_temporada" varchar(50) NOT NULL UNIQUE,
-	"dia_inicio" integer NOT NULL,
-	"mes_inicio" integer NOT NULL,
-	"dia_fin" integer NOT NULL,
-	"mes_fin" integer NOT NULL,
+	"fecha_inicio" varchar(5) NOT NULL, 
+	"fecha_fin" varchar(5) NOT NULL,    
 	"descripcion" varchar(255),
 	PRIMARY KEY ("id_temporada")
 );
 
 CREATE TABLE IF NOT EXISTS "tarifa" (
 	"id_tarifa" serial NOT NULL,
-	"id_temporada" integer NOT NULL,
 	"nombre_tarifa" varchar(100) NOT NULL,
 	"ocupacion_base" integer NOT NULL DEFAULT 1,
 	"incluye" text NOT NULL,
@@ -101,6 +98,12 @@ CREATE TABLE IF NOT EXISTS "tarifa" (
 	"iva" numeric(5,2) NOT NULL DEFAULT 16.00,
 	"huesped_adicional" numeric(10,2) NOT NULL DEFAULT 15.00,
 	PRIMARY KEY ("id_tarifa")
+);
+
+CREATE TABLE IF NOT EXISTS "tarifa_temporada" (
+	"id_tarifa" integer NOT NULL,
+	"id_temporada" integer NOT NULL,
+	PRIMARY KEY ("id_tarifa", "id_temporada")
 );
 
 CREATE TABLE IF NOT EXISTS "tarifa_hab" (
@@ -190,7 +193,8 @@ ALTER TABLE "auditoria" ADD CONSTRAINT "auditoria_fk2" FOREIGN KEY ("id_modulo")
 
 ALTER TABLE "habitacion" ADD CONSTRAINT "habitacion_fk1" FOREIGN KEY ("id_tipo_habitacion") REFERENCES "tipo_habitacion"("id_tipo_habitacion");
 
-ALTER TABLE "tarifa" ADD CONSTRAINT "tarifa_fk_temporada" FOREIGN KEY ("id_temporada") REFERENCES "temporada"("id_temporada");
+ALTER TABLE "tarifa_temporada" ADD CONSTRAINT "tarifa_temporada_fk0" FOREIGN KEY ("id_tarifa") REFERENCES "tarifa"("id_tarifa") ON DELETE CASCADE;
+ALTER TABLE "tarifa_temporada" ADD CONSTRAINT "tarifa_temporada_fk1" FOREIGN KEY ("id_temporada") REFERENCES "temporada"("id_temporada") ON DELETE CASCADE;
 
 ALTER TABLE "tarifa_hab" ADD CONSTRAINT "tarifa_hab_fk0" FOREIGN KEY ("id_tarifa") REFERENCES "tarifa"("id_tarifa") ON DELETE CASCADE;
 ALTER TABLE "tarifa_hab" ADD CONSTRAINT "tarifa_hab_fk1" FOREIGN KEY ("id_tipo_hab") REFERENCES "tipo_habitacion"("id_tipo_habitacion") ON DELETE CASCADE;
@@ -275,3 +279,7 @@ ON CONFLICT ("id_rol", "id_funcion") DO NOTHING;
 INSERT INTO "usuario" ("id_usuario", "id_rol", "nombre", "correo", "contrasenna", "estado") 
 VALUES (1, 1, 'Administrador General', 'admin@hotel.com', '$2b$10$mXakf2ycEOPohLjHb7J21eYbi09EJpof1XtTQfTAb5Y7c7qymTKyu', 'ACTIVO')
 ON CONFLICT ("id_usuario") DO NOTHING;
+
+INSERT INTO temporada (nombre_temporada, fecha_inicio, fecha_fin, descripcion)
+VALUES ('Temporada normal', 'N/A', 'N/A', 'Tarifa base para la habitacion')
+ON CONFLICT (nombre_temporada) DO NOTHING;
