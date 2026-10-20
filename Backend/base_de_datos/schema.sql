@@ -283,3 +283,20 @@ ON CONFLICT ("id_usuario") DO NOTHING;
 INSERT INTO temporada (nombre_temporada, fecha_inicio, fecha_fin, descripcion)
 VALUES ('Temporada normal', 'N/A', 'N/A', 'Tarifa base para la habitacion')
 ON CONFLICT (nombre_temporada) DO NOTHING;
+
+-- Agregar campos de Telegram a la tabla reserva existente
+ALTER TABLE "reserva" ADD COLUMN IF NOT EXISTS "id_telegram" varchar(100) DEFAULT NULL;
+ALTER TABLE "reserva" ADD COLUMN IF NOT EXISTS "usuario_telegram" varchar(100) DEFAULT NULL;
+
+-- Tabla para llevar el registro de notificaciones enviadas al chat del huésped
+CREATE TABLE IF NOT EXISTS "telegram_notificacion_log" (
+	"id_notificacion" serial NOT NULL,
+	"codigo_reserva" integer NOT NULL,
+	"fecha_hora" timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	"mensaje" text NOT NULL,
+	"entregado" boolean NOT NULL DEFAULT TRUE,
+	PRIMARY KEY ("id_notificacion")
+);
+
+ALTER TABLE "telegram_notificacion_log" ADD CONSTRAINT "telegram_notificacion_log_fk_reserva" 
+FOREIGN KEY ("codigo_reserva") REFERENCES "reserva"("codigo_reserva") ON DELETE CASCADE;
