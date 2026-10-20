@@ -300,3 +300,12 @@ CREATE TABLE IF NOT EXISTS "telegram_notificacion_log" (
 
 ALTER TABLE "telegram_notificacion_log" ADD CONSTRAINT "telegram_notificacion_log_fk_reserva" 
 FOREIGN KEY ("codigo_reserva") REFERENCES "reserva"("codigo_reserva") ON DELETE CASCADE;
+
+CREATE TABLE IF NOT EXISTS "huesped_telegram" (
+	"id_huesped" integer NOT NULL,
+	"id_telegram" varchar(100) NOT NULL UNIQUE,
+	"usuario_telegram" varchar(100),
+	PRIMARY KEY ("id_huesped"),
+	CONSTRAINT "huesped_telegram_fk_huesped" 
+	FOREIGN KEY ("id_huesped") REFERENCES "huesped"("id_huesped") ON DELETE CASCADE
+);

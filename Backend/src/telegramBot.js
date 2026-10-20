@@ -40,6 +40,12 @@ bot.command('disponibles', async (ctx) => {
   const checkin = texto[1];
   const checkout = texto[2];
 
+
+  const hoyStr = new Date().toISOString().split('T')[0];
+  if (checkin < hoyStr) {
+    return ctx.reply('La fecha de entrada no puede ser una fecha pasada.');
+  }
+
   if (new Date(checkout) <= new Date(checkin)) {
     return ctx.reply('La fecha de salida debe ser posterior a la de entrada.');
   }
@@ -75,7 +81,7 @@ bot.command('disponibles', async (ctx) => {
     }
 
     let mensaje = `*Habitaciones Libres del ${checkin} al ${checkout}*:\n\n`;
-    
+
     libres.forEach(hab => {
 
       const temporadaEncontrada = temporadas.find((temp) => {
@@ -97,9 +103,9 @@ bot.command('disponibles', async (ctx) => {
       if (temporadaEncontrada) {
         idTemporadaObjetivo = temporadaEncontrada.id_temporada;
       } else {
-        const temporadaNormal = temporadas.find((t) => 
-          t.fecha_inicio === 'N/A' || 
-          t.nombre_temporada.toLowerCase().includes('temporada normal') || 
+        const temporadaNormal = temporadas.find((t) =>
+          t.fecha_inicio === 'N/A' ||
+          t.nombre_temporada.toLowerCase().includes('temporada normal') ||
           t.nombre_temporada.toLowerCase().includes('baja')
         );
         if (temporadaNormal) idTemporadaObjetivo = temporadaNormal.id_temporada;
@@ -108,7 +114,7 @@ bot.command('disponibles', async (ctx) => {
       const tarifaCoincidente = tarifas.find((t) => {
         const matchTipo = String(t.id_tipo_habitacion) === String(hab.id_tipo_habitacion);
         const matchEstado = t.estado?.toLowerCase() === 'activa';
-        const matchTemp = idTemporadaObjetivo ? (Array.isArray(t.id_temporadas) 
+        const matchTemp = idTemporadaObjetivo ? (Array.isArray(t.id_temporadas)
           ? t.id_temporadas.some(idT => String(idT) === String(idTemporadaObjetivo))
           : String(t.id_temporada) === String(idTemporadaObjetivo)) : true;
         return matchTipo && matchEstado && matchTemp;
@@ -117,9 +123,9 @@ bot.command('disponibles', async (ctx) => {
       const precioNoche = tarifaCoincidente?.precio_base || hab.precio_base || 120;
 
       mensaje += `• *Habitación N° ${hab.codigo_habitacion}* (${hab.nombre_tipo})\n` +
-                 `  Piso: ${hab.piso} | Capacidad máx: *${hab.capacidad} personas*\n` +
-                 `  Precio por noche: *$ ${precioNoche} USD*\n` +
-                 `  Amenidades: ${hab.amenidades}\n\n`;
+        `  Piso: ${hab.piso} | Capacidad máx: *${hab.capacidad} personas*\n` +
+        `  Precio por noche: *$ ${precioNoche} USD*\n` +
+        `  Amenidades: ${hab.amenidades}\n\n`;
     });
 
     mensaje += `Para proceder a reservar escribe /reservar`;
@@ -212,7 +218,7 @@ bot.on('text', async (ctx) => {
 
       try {
         const nuevoHuespedResp = await axios.post(`${API_BACKEND}/huespedes`, {
-          tipo_documento: sesion.tipo_documento, 
+          tipo_documento: sesion.tipo_documento,
           num_documento: sesion.num_documento,
           nombre: sesion.nombre,
           telefono: sesion.telefono,
@@ -232,6 +238,12 @@ bot.on('text', async (ctx) => {
       break;
 
     case 'ESPERANDO_CHECKIN':
+      const hoyStrBot = new Date().toISOString().split('T')[0];
+
+      if (texto < hoyStrBot) {
+        return ctx.reply('La fecha de entrada no puede ser una fecha pasada. Por favor, ingresa una fecha válida (Formato: AAAA-MM-DD):');
+      }
+
       sesion.fecha_checkin = texto;
       sesion.paso = 'ESPERANDO_CHECKOUT';
       ctx.reply('Ingresa la fecha de *salida* (Formato: AAAA-MM-DD):', { parse_mode: 'Markdown' });
@@ -309,9 +321,9 @@ bot.on('text', async (ctx) => {
           if (temporadaEncontrada) {
             idTemporadaObjetivo = temporadaEncontrada.id_temporada;
           } else {
-            const temporadaNormal = temporadas.find((t) => 
-              t.fecha_inicio === 'N/A' || 
-              t.nombre_temporada.toLowerCase().includes('temporada normal') || 
+            const temporadaNormal = temporadas.find((t) =>
+              t.fecha_inicio === 'N/A' ||
+              t.nombre_temporada.toLowerCase().includes('temporada normal') ||
               t.nombre_temporada.toLowerCase().includes('baja')
             );
             if (temporadaNormal) idTemporadaObjetivo = temporadaNormal.id_temporada;
@@ -320,7 +332,7 @@ bot.on('text', async (ctx) => {
           const tarifaCoincidente = tarifas.find((t) => {
             const matchTipo = String(t.id_tipo_habitacion) === String(h.id_tipo_habitacion);
             const matchEstado = t.estado?.toLowerCase() === 'activa';
-            const matchTemp = idTemporadaObjetivo ? (Array.isArray(t.id_temporadas) 
+            const matchTemp = idTemporadaObjetivo ? (Array.isArray(t.id_temporadas)
               ? t.id_temporadas.some(idT => String(idT) === String(idTemporadaObjetivo))
               : String(t.id_temporada) === String(idTemporadaObjetivo)) : true;
             return matchTipo && matchEstado && matchTemp;
@@ -443,9 +455,9 @@ async function finalizarReserva(ctx, sesion, userId) {
       if (temporadaEncontrada) {
         idTemporadaObjetivo = temporadaEncontrada.id_temporada;
       } else {
-        const temporadaNormal = temporadas.find((t) => 
-          t.fecha_inicio === 'N/A' || 
-          t.nombre_temporada.toLowerCase().includes('temporada normal') || 
+        const temporadaNormal = temporadas.find((t) =>
+          t.fecha_inicio === 'N/A' ||
+          t.nombre_temporada.toLowerCase().includes('temporada normal') ||
           t.nombre_temporada.toLowerCase().includes('baja')
         );
         if (temporadaNormal) idTemporadaObjetivo = temporadaNormal.id_temporada;
@@ -455,7 +467,7 @@ async function finalizarReserva(ctx, sesion, userId) {
         const tarifaCoincidente = tarifasCatalogo.find((t) => {
           const matchTipo = String(t.id_tipo_habitacion) === String(habitacionSeleccionada.id_tipo_habitacion);
           const matchEstado = t.estado?.toLowerCase() === 'activa';
-          const matchTemp = Array.isArray(t.id_temporadas) 
+          const matchTemp = Array.isArray(t.id_temporadas)
             ? t.id_temporadas.some(idT => String(idT) === String(idTemporadaObjetivo))
             : String(t.id_temporada) === String(idTemporadaObjetivo);
           return matchTipo && matchEstado && matchTemp;

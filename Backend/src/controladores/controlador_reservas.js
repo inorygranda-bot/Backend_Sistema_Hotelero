@@ -79,13 +79,13 @@ const obtenerReservas = async (peticion, respuesta) => {
       WHERE r.id_telegram IS NULL -- <--- EXCLUYE LAS DE TELEGRAM AQUÍ
       ORDER BY r.codigo_reserva DESC;
     `;
-    
+
     const resultado = await conexion.query(consultaSQL);
     return respuesta.status(200).json(resultado.rows);
   } catch (error) {
     console.error('Error al obtener la lista de reservas:', error);
-    return respuesta.status(500).json({ 
-      mensaje: 'Error al consultar las reservas en la base de datos.' 
+    return respuesta.status(500).json({
+      mensaje: 'Error al consultar las reservas en la base de datos.'
     });
   }
 };
@@ -105,6 +105,20 @@ const crearReserva = async (peticion, respuesta) => {
   if (!id_huesped || !codigo_habitacion || !fecha_checkin || !fecha_checkout || !cantidad_huespedes) {
     return respuesta.status(400).json({ 
       mensaje: 'Todos los campos obligatorios de la reserva deben ser completados.' 
+    });
+  }
+
+  // Validar que la fecha de check-in no sea una fecha pasada
+  const hoyStr = new Date().toISOString().split('T')[0];
+  if (fecha_checkin < hoyStr) {
+    return respuesta.status(400).json({
+      mensaje: 'La fecha de check-in no puede ser anterior a la fecha actual.'
+    });
+  }
+
+  if (new Date(fecha_checkout) <= new Date(fecha_checkin)) {
+    return respuesta.status(400).json({
+      mensaje: 'La fecha de check-out debe ser posterior a la fecha de check-in.'
     });
   }
 
@@ -144,7 +158,7 @@ const crearReserva = async (peticion, respuesta) => {
         AND fecha_checkin < $3 
         AND fecha_checkout > $2;
     `;
-    
+
     const resultadoSolapamiento = await cliente.query(consultaSolapamiento, [
       codigo_habitacion,
       fecha_checkin,
@@ -174,7 +188,7 @@ const crearReserva = async (peticion, respuesta) => {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *;
     `;
-    
+
     const estadoReserva = estado || 'PENDIENTE';
     const resultado = await cliente.query(consultaSQL, [
       id_huesped,
@@ -211,8 +225,8 @@ const crearReserva = async (peticion, respuesta) => {
     await cliente.query('COMMIT');
 
     await registrarAuditoria(
-      idUsuarioResponsable, 
-      'Reservas', 
+      idUsuarioResponsable,
+      'Reservas',
       `Creó la reserva N° ${nuevaReserva.codigo_reserva} para el huésped "${nombreHuesped}" en la habitación N° ${codigo_habitacion}`
     );
 
@@ -223,8 +237,8 @@ const crearReserva = async (peticion, respuesta) => {
   } catch (error) {
     await cliente.query('ROLLBACK');
     console.error('Error al registrar reserva:', error);
-    return respuesta.status(500).json({ 
-      mensaje: 'Error interno al intentar guardar la reserva.' 
+    return respuesta.status(500).json({
+      mensaje: 'Error interno al intentar guardar la reserva.'
     });
   } finally {
     cliente.release();
@@ -233,20 +247,33 @@ const crearReserva = async (peticion, respuesta) => {
 
 const actualizarReserva = async (peticion, respuesta) => {
   const { id } = peticion.params;
-  const { 
-    id_huesped, 
-    codigo_habitacion, 
-    fecha_checkin, 
-    fecha_checkout, 
-    cantidad_huespedes, 
+  const {
+    id_huesped,
+    codigo_habitacion,
+    fecha_checkin,
+    fecha_checkout,
+    cantidad_huespedes,
     estado,
     monto_pagado,
     recargos_ids
   } = peticion.body;
 
   if (!id_huesped || !codigo_habitacion || !fecha_checkin || !fecha_checkout || !cantidad_huespedes) {
-    return respuesta.status(400).json({ 
-      mensaje: 'Por favor completa todos los campos requeridos para actualizar la reserva.' 
+    return respuesta.status(400).json({
+      mensaje: 'Por favor completa todos los campos requeridos para actualizar la reserva.'
+    });
+  }
+
+  const hoyStr = new Date().toISOString().split('T')[0];
+  if (fecha_checkin < hoyStr) {
+    return respuesta.status(400).json({
+      mensaje: 'La fecha de check-in no puede ser anterior a la fecha actual.'
+    });
+  }
+
+  if (new Date(fecha_checkout) <= new Date(fecha_checkin)) {
+    return respuesta.status(400).json({
+      mensaje: 'La fecha de check-out debe ser posterior a la fecha de check-in.'
     });
   }
 
@@ -328,7 +355,7 @@ const actualizarReserva = async (peticion, respuesta) => {
       WHERE codigo_reserva = $8
       RETURNING *;
     `;
-    
+
     const resultado = await cliente.query(consultaSQL, [
       id_huesped,
       codigo_habitacion,
@@ -363,12 +390,12 @@ const actualizarReserva = async (peticion, respuesta) => {
     const detalleCambios = cambios.length > 0 ? cambios.join(', ') : 'actualizó los detalles de la estancia';
 
     await registrarAuditoria(
-      idUsuarioResponsable, 
-      'Reservas', 
+      idUsuarioResponsable,
+      'Reservas',
       `Actualizó la reserva N° ${id} del huésped "${nombreHuespedNuevo}": ${detalleCambios}`
     );
 
-    return respuesta.status(200).json({ 
+    return respuesta.status(200).json({
       mensaje: 'Reserva actualizada correctamente.',
       reserva: resultado.rows[0]
     });
@@ -418,9 +445,9 @@ const obtenerReservaPorId = async (peticion, respuesta) => {
 
 const cambiarEstadoReserva = async (peticion, respuesta) => {
   const { id } = peticion.params;
-  const { estado } = peticion.body;
+  const { estado, mensaje_personalizado } = peticion.body;
   const estadosValidos = ['PENDIENTE', 'CONFIRMADA', 'CHECKIN', 'CHECKOUT', 'CANCELADA'];
-  
+
   if (!estado || !estadosValidos.includes(estado.toUpperCase())) {
     return respuesta.status(400).json({ mensaje: 'Estado no válido.' });
   }
@@ -434,41 +461,45 @@ const cambiarEstadoReserva = async (peticion, respuesta) => {
     `, [id]);
 
     if (reservaActual.rows.length === 0) return respuesta.status(404).json({ mensaje: 'Reserva no encontrada.' });
-    
+
     const { codigo_habitacion, id_telegram, nombre_huesped } = reservaActual.rows[0];
     const nuevoEstado = estado.toUpperCase();
-    
-    // Si la reserva viene de Telegram y se confirma, se traslada a reservas normales (id_telegram = NULL)
+
     let resultado;
-    if (id_telegram && nuevoEstado === 'CONFIRMADA') {
+    // Al confirmar o cancelar, liberamos el id_telegram para que pase a reservas normales
+    if (id_telegram && (nuevoEstado === 'CONFIRMADA' || nuevoEstado === 'CANCELADA')) {
       resultado = await conexion.query(
-        'UPDATE reserva SET estado = $1, id_telegram = NULL, usuario_telegram = NULL WHERE codigo_reserva = $2 RETURNING *;', 
+        'UPDATE reserva SET estado = $1, id_telegram = NULL, usuario_telegram = NULL WHERE codigo_reserva = $2 RETURNING *;',
         [nuevoEstado, id]
       );
     } else {
       resultado = await conexion.query(
-        'UPDATE reserva SET estado = $1 WHERE codigo_reserva = $2 RETURNING *;', 
+        'UPDATE reserva SET estado = $1 WHERE codigo_reserva = $2 RETURNING *;',
         [nuevoEstado, id]
       );
     }
-    
-    // Actualización de estados de la habitación según el nuevo estado de reserva
+
     if (nuevoEstado === 'CHECKIN') await conexion.query("UPDATE habitacion SET estado = 'Ocupada' WHERE codigo_habitacion = $1", [codigo_habitacion]);
     else if (nuevoEstado === 'CHECKOUT') await conexion.query("UPDATE habitacion SET estado = 'Sucia' WHERE codigo_habitacion = $1", [codigo_habitacion]);
-    else if (nuevoEstado === 'CANCELADA') await conexion.query("UPDATE habitacion SET estado = 'Disponible' WHERE codigo_habitacion = $1", [codigo_habitacion]);
+    else if (nuevoEstado === 'CANCELADA') await conexion.query("UPDATE habitacion->'estado' SET estado = 'Disponible' WHERE codigo_habitacion = $1", [codigo_habitacion]).catch(() => {
+      conexion.query("UPDATE habitacion SET estado = 'Disponible' WHERE codigo_habitacion = $1", [codigo_habitacion]);
+    });
 
-    // Enviar notificación automática por Telegram si la reserva contaba con id_telegram
     if (id_telegram) {
       const tokenBot = process.env.TELEGRAM_BOT_TOKEN;
       const urlApiTelegram = `https://api.telegram.org/bot${tokenBot}/sendMessage`;
-      
+
       let mensajeTexto = '';
-      if (nuevoEstado === 'CONFIRMADA') {
-        mensajeTexto = `¡Buenas noticias! Tu reserva N° ${id} ha sido *CONFIRMADA*. ¡Te esperamos en el hotel!`;
-      } else if (nuevoEstado === 'CANCELADA') {
-        mensajeTexto = `Tu reserva N° ${id} ha sido *CANCELADA*.`;
+      if (mensaje_personalizado && mensaje_personalizado.trim() !== '') {
+        mensajeTexto = mensaje_personalizado.trim();
       } else {
-        mensajeTexto = `Tu reserva N° ${id} ha cambiado al estado: *${nuevoEstado}*.`;
+        if (nuevoEstado === 'CONFIRMADA') {
+          mensajeTexto = `¡Buenas noticias! Tu reserva N° ${id} ha sido *CONFIRMADA*. ¡Te esperamos en el hotel!`;
+        } else if (nuevoEstado === 'CANCELADA') {
+          mensajeTexto = `Lamentamos informarte que tu reserva N° ${id} ha sido *CANCELADA*.`;
+        } else {
+          mensajeTexto = `Tu reserva N° ${id} ha cambiado al estado: *${nuevoEstado}*.`;
+        }
       }
 
       try {
@@ -484,18 +515,14 @@ const cambiarEstadoReserva = async (peticion, respuesta) => {
         );
       } catch (errorTelegram) {
         console.error('Error al enviar notificación a Telegram:', errorTelegram.message);
-        await conexion.query(
-          `INSERT INTO telegram_notificacion_log (codigo_reserva, mensaje, entregado) VALUES ($1, $2, $3)`,
-          [id, `Notificación de cambio a ${nuevoEstado}`, false]
-        ).catch(() => {});
       }
     }
 
     const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
     await registrarAuditoria(
-      idUsuarioResponsable, 
-      'Reservas', 
-      `Cambió el estado de la reserva N° ${id} a ${nuevoEstado}`
+      idUsuarioResponsable,
+      'Reservas',
+      `Cambió el estado de la reserva N° ${id} a ${nuevoEstado} y la trasladó al panel general`
     );
 
     return respuesta.status(200).json({ mensaje: `Reserva ${nuevoEstado.toLowerCase()} con éxito.`, reserva: resultado.rows[0] });
@@ -510,7 +537,7 @@ const eliminarReserva = async (peticion, respuesta) => {
   const cliente = await conexion.connect();
   try {
     await cliente.query('BEGIN;');
-    
+
     const reservaInfo = await cliente.query(`
       SELECT h.nombre AS nombre_huesped 
       FROM reserva r
@@ -522,9 +549,9 @@ const eliminarReserva = async (peticion, respuesta) => {
 
     await cliente.query('DELETE FROM pago WHERE codigo_reserva = $1;', [id]);
     await cliente.query('DELETE FROM reserva_recargo WHERE codigo_reserva = $1;', [id]);
-    
+
     const resultado = await cliente.query('DELETE FROM reserva WHERE codigo_reserva = $1 RETURNING *;', [id]);
-    
+
     if (resultado.rowCount === 0) {
       await cliente.query('ROLLBACK;');
       return respuesta.status(404).json({ mensaje: 'Reserva no encontrada.' });
@@ -534,8 +561,8 @@ const eliminarReserva = async (peticion, respuesta) => {
 
     const idUsuarioResponsable = peticion.body.id_usuario || peticion.query.id_usuario || 1;
     await registrarAuditoria(
-      idUsuarioResponsable, 
-      'Reservas', 
+      idUsuarioResponsable,
+      'Reservas',
       `Eliminó permanentemente la reserva N° ${id} del huésped "${nombreHuesped}"`
     );
 
@@ -591,6 +618,15 @@ const crearReservaTelegram = async (peticion, respuesta) => {
   if (!id_huesped || !codigo_habitacion || !fecha_checkin || !fecha_checkout || !id_telegram) {
     return respuesta.status(400).json({ mensaje: 'Faltan datos obligatorios para registrar la reserva de Telegram.' });
   }
+
+
+  const hoyStr = new Date().toISOString().split('T')[0];
+  if (fecha_checkin < hoyStr) {
+    return respuesta.status(400).json({
+      mensaje: 'La fecha de check-in no puede ser anterior a la fecha actual.'
+    });
+  }
+
 
   const cliente = await conexion.connect();
   try {
@@ -681,7 +717,7 @@ module.exports = {
   actualizarReserva,
   cambiarEstadoReserva,
   eliminarReserva,
-  obtenerReservasTelegram,      
-  crearReservaTelegram,         
+  obtenerReservasTelegram,
+  crearReservaTelegram,
   enviarNotificacionTelegram
 };
