@@ -6,12 +6,20 @@ const {
   crearReserva,
   actualizarReserva,
   cambiarEstadoReserva,
-  eliminarReserva
+  eliminarReserva,
+  obtenerReservasTelegram,
+  crearReservaTelegram,
+  enviarNotificacionTelegram
 } = require('../controladores/controlador_reservas');
 
 enrutador.get('/', obtenerReservas);
-enrutador.get('/:id', obtenerReservaPorId);
 enrutador.post('/', crearReserva);
+
+enrutador.get('/telegram', obtenerReservasTelegram);
+enrutador.post('/telegram', crearReservaTelegram);
+enrutador.post('/telegram/:id/notificar', enviarNotificacionTelegram);
+
+enrutador.get('/:id', obtenerReservaPorId);
 enrutador.put('/:id', actualizarReserva);
 enrutador.put('/:id/estado', cambiarEstadoReserva);
 enrutador.delete('/:id', eliminarReserva);

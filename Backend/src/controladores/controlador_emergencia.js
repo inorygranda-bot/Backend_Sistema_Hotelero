@@ -39,17 +39,19 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
 
   try {
     const tokenBot = process.env.TELEGRAM_BOT_TOKEN;
-    const chatId = process.env.TELEGRAM_CHAT_ID;
+    const adminChatId = process.env.TELEGRAM_CHAT_ID; // Chat de la central / admin
 
     const usuarioRes = await conexion.query('SELECT nombre FROM usuario WHERE id_usuario = $1', [id_usuario || 1]);
     const nombreUsuario = usuarioRes.rows[0]?.nombre || 'Administrador';
 
+    // 1. Consultar huéspedes con CHECKIN y su respectivo id_telegram registrado
     const consultaSQL = `
       SELECT 
         h.nombre,
         r.codigo_habitacion,
         COALESCE(hab.piso, 'S/P') AS piso,
-        COALESCE(h.telefono, 'Sin Teléfono') AS telefono
+        COALESCE(h.telefono, 'Sin Teléfono') AS telefono,
+        r.id_telegram
       FROM reserva r
       JOIN huesped h ON r.id_huesped = h.id_huesped
       LEFT JOIN habitacion hab ON r.codigo_habitacion = hab.codigo_habitacion
@@ -62,36 +64,58 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
     let listaHuespedesTexto = '';
     if (huespedes.length > 0) {
       listaHuespedesTexto = huespedes
-        .map((h, index) => `  *${index + 1}.* Hab. *${h.codigo_habitacion}* (Piso ${h.piso}) - ${h.nombre} (${h.telefono})`)
+        .map((h, index) => `  *${index + 1}.* Hab. *${h.codigo_habitacion}* (Piso ${h.piso}) - ${h.nombre} ${h.id_telegram ? '📱 (Telegram)' : ''}`)
         .join('\n');
     } else {
       listaHuespedesTexto = '  _No hay huéspedes registrados en CHECKIN actualmente._';
     }
 
     const fechaHora = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
+    const urlApiTelegram = `https://api.telegram.org/bot${tokenBot}/sendMessage`;
 
-    const textoTelegram = 
+    // 2. Enviar el reporte ejecutivo a la central de administración (.env)
+    const textoReporteAdmin = 
       `*[ REPORTE OPERATIVO DE EMERGENCIA ]*\n` +
       `----------------------------------------\n` +
       `*Emitido por:* ${nombreUsuario}\n` +
       `*Fecha y Hora:* ${fechaHora}\n` +
       `*Estado:* ALERTA DE SEGURIDAD ACTIVADA\n\n` +
-      `*Instruccion / Mensaje de Protocolo:*\n` +
+      `*Instrucción de Protocolo:* \n` +
       `_"${mensaje.trim()}"_\n\n` +
-      `*Censo Inmediato de Evacuacion:*\n` +
-      `- *Total Huespedes en Hotel (CHECKIN):* ${huespedes.length}\n\n` +
-      `*Desglose por Habitacion:*\n` +
+      `*Censo de Evacuación:* ${huespedes.length} huésped(es) en total.\n` +
       `${listaHuespedesTexto}\n` +
-      `----------------------------------------\n` +
-      `_Notificacion generada automaticamente por el Sistema de Control del Hotel._`;
+      `----------------------------------------`;
 
-    const urlApiTelegram = `https://api.telegram.org/bot${tokenBot}/sendMessage`;
+    if (adminChatId) {
+      await axios.post(urlApiTelegram, {
+        chat_id: adminChatId,
+        text: textoReporteAdmin,
+        parse_mode: 'Markdown'
+      });
+    }
 
-    await axios.post(urlApiTelegram, {
-      chat_id: chatId,
-      text: textoTelegram,
-      parse_mode: 'Markdown'
-    });
+    // 3. Enviar la advertencia directamente a cada huésped que tenga Telegram registrado
+    let huespedesNotificados = 0;
+    for (const h of huespedes) {
+      if (h.id_telegram) {
+        const textoAdvertenciaHuesped = 
+          `🚨 *¡ALERTA DE EMERGENCIA EN EL HOTEL!* 🚨\n\n` +
+          `Estimado/a *${h.nombre}* (Habitación N° ${h.codigo_habitacion}):\n\n` +
+          `_${mensaje.trim()}_\n\n` +
+          `Por favor, mantenga la calma, siga las instrucciones del personal y diríjase de inmediato a la salida de emergencia más cercana. Su seguridad es nuestra prioridad.`;
+
+        try {
+          await axios.post(urlApiTelegram, {
+            chat_id: h.id_telegram,
+            text: textoAdvertenciaHuesped,
+            parse_mode: 'Markdown'
+          });
+          huespedesNotificados++;
+        } catch (errHuesped) {
+          console.error(`No se pudo enviar la advertencia al huésped ${h.nombre} (Telegram ID: ${h.id_telegram}):`, errHuesped.message);
+        }
+      }
+    }
 
     const actualizarLogSQL = `
       UPDATE emergencia_log 
@@ -104,14 +128,14 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
     await registrarAuditoria(
       id_usuario || 1, 
       8, 
-      `El usuario ${nombreUsuario} transmitió reporte masivo de emergencia a Telegram (${huespedes.length} huéspedes censados)`
+      `El usuario ${nombreUsuario} activó alerta masiva: Reporte enviado a administración y ${huespedesNotificados} huéspedes notificados vía Telegram.`
     );
 
     return respuesta.status(200).json({
-      mensaje: `Reporte oficial transmitido con éxito al Telegram por ${nombreUsuario} (${huespedes.length} huéspedes censados).`
+      mensaje: `Alerta transmitida con éxito. Reporte enviado a la central y advertencia enviada a ${huespedesNotificados} de ${huespedes.length} huéspedes con Telegram activo.`
     });
   } catch (error) {
-    console.error('Error al enviar reporte por Telegram:', error.response?.data || error.message);
+    console.error('Error al enviar mensajes masivos de emergencia:', error.response?.data || error.message);
     return respuesta.status(500).json({ mensaje: 'Error al conectar con la API de Telegram.' });
   }
 };
