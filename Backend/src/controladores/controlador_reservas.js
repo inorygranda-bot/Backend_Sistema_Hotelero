@@ -210,6 +210,21 @@ const crearReserva = async (peticion, respuesta) => {
         "UPDATE habitacion SET estado = 'Ocupada' WHERE codigo_habitacion = $1",
         [codigo_habitacion]
       );
+
+      await cliente.query(
+        `INSERT INTO checkin (codigo_reserva, cantidad_acompanantes, cantidad_maletas, observaciones)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (codigo_reserva) DO UPDATE 
+         SET cantidad_acompanantes = EXCLUDED.cantidad_acompanantes,
+             cantidad_maletas = EXCLUDED.cantidad_maletas,
+             observaciones = EXCLUDED.observaciones;`,
+        [
+          nuevaReserva.codigo_reserva, 
+          Math.max(0, parseInt(peticion.body.cantidad_huespedes || 1) - 1), 
+          peticion.body.cantidad_maletas || 0, 
+          peticion.body.observaciones || 'Llegada directa en recepción'
+        ]
+      );
     }
 
     const huespedRes = await cliente.query('SELECT nombre FROM huesped WHERE id_huesped = $1', [id_huesped]);
@@ -616,6 +631,7 @@ const crearReservaTelegram = async (peticion, respuesta) => {
   try {
     await cliente.query('BEGIN');
 
+    // 1. Insertar la reserva con los datos de Telegram
     const consultaSQL = `
       INSERT INTO reserva (id_huesped, codigo_habitacion, id_usuario, fecha_checkin, fecha_checkout, cantidad_huespedes, estado, monto_pagado, id_telegram, usuario_telegram)
       VALUES ($1, $2, 1, $3, $4, $5, 'PENDIENTE', $6, $7, $8)
@@ -626,6 +642,15 @@ const crearReservaTelegram = async (peticion, respuesta) => {
     ]);
 
     const nuevaReserva = resultado.rows[0];
+
+    // 2. Registrar o actualizar el vínculo en la tabla huesped_telegram
+    await cliente.query(`
+      INSERT INTO huesped_telegram (id_huesped, id_telegram, usuario_telegram)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (id_huesped) 
+      DO UPDATE SET id_telegram = EXCLUDED.id_telegram, usuario_telegram = EXCLUDED.usuario_telegram;
+    `, [id_huesped, id_telegram, usuario_telegram]);
+
     await cliente.query('COMMIT');
 
     return respuesta.status(201).json({
@@ -724,9 +749,70 @@ const obtenerReporteReservas = async (peticion, respuesta) => {
     return respuesta.status(500).json({ 
       mensaje: 'Error al consultar los datos para el reporte de reservas.' 
     });
+const realizarCheckinReserva = async (peticion, respuesta) => {
+  const { id } = peticion.params; 
+  const { cantidad_acompanantes, cantidad_maletas, observaciones, id_usuario, nueva_fecha_checkin } = peticion.body;
+
+  const cliente = await conexion.connect();
+  try {
+    await cliente.query('BEGIN');
+
+    const reservaRes = await cliente.query('SELECT * FROM reserva WHERE codigo_reserva = $1', [id]);
+    if (reservaRes.rows.length === 0) {
+      await cliente.query('ROLLBACK');
+      return respuesta.status(404).json({ mensaje: 'La reserva especificada no existe.' });
+    }
+
+    const reserva = reservaRes.rows[0];
+    let mensajeAuditoria = `Realizó el check-in de la reserva N° ${id} en la habitación N° ${reserva.codigo_habitacion}`;
+
+    // Si se indicó una nueva fecha de check-in anticipada, la actualizamos en la reserva
+    if (nueva_fecha_checkin) {
+      await cliente.query(
+        "UPDATE reserva SET fecha_checkin = $1, estado = 'CHECKIN' WHERE codigo_reserva = $2",
+        [nueva_fecha_checkin, id]
+      );
+      mensajeAuditoria = `Actualizó la fecha de check-in al ${nueva_fecha_checkin} y realizó el check-in de la reserva N° ${id}`;
+    } else {
+      await cliente.query(
+        "UPDATE reserva SET estado = 'CHECKIN' WHERE codigo_reserva = $1",
+        [id]
+      );
+    }
+
+    await cliente.query(
+      "UPDATE habitacion SET estado = 'Ocupada' WHERE codigo_habitacion = $1",
+      [reserva.codigo_habitacion]
+    );
+
+    await cliente.query(
+      `INSERT INTO checkin (codigo_reserva, cantidad_acompanantes, cantidad_maletas, observaciones)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (codigo_reserva) DO UPDATE 
+       SET cantidad_acompanantes = EXCLUDED.cantidad_acompanantes,
+           cantidad_maletas = EXCLUDED.cantidad_maletas,
+           observaciones = EXCLUDED.observaciones;`,
+      [
+        id,
+        cantidad_acompanantes !== undefined ? cantidad_acompanantes : 0,
+        cantidad_maletas !== undefined ? cantidad_maletas : 0,
+        observaciones || ''
+      ]
+    );
+
+    const usuarioResponsable = id_usuario || 1;
+    await registrarAuditoria(usuarioResponsable, 'Reservas', mensajeAuditoria);
+
+    await cliente.query('COMMIT');
+    return respuesta.status(200).json({ mensaje: 'Check-in realizado con éxito y habitación ocupada.' });
+  } catch (error) {
+    await cliente.query('ROLLBACK');
+    console.error('Error al ejecutar el check-in:', error);
+    return respuesta.status(500).json({ mensaje: 'Error interno al procesar el check-in.' });
+  } finally {
+    cliente.release();
   }
 };
-
 module.exports = {
   obtenerReservas,
   obtenerReservaPorId,
@@ -737,5 +823,6 @@ module.exports = {
   obtenerReservasTelegram,
   crearReservaTelegram,
   enviarNotificacionTelegram,
-  obtenerReporteReservas
+  obtenerReporteReservas,
+  realizarCheckinReserva
 };

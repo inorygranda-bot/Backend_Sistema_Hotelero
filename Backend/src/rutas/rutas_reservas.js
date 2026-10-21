@@ -10,7 +10,8 @@ const {
   obtenerReservasTelegram,
   crearReservaTelegram,
   enviarNotificacionTelegram,
-  obtenerReporteReservas
+  obtenerReporteReservas,
+  realizarCheckinReserva
 } = require('../controladores/controlador_reservas');
 
 enrutador.get('/', obtenerReservas);
@@ -27,5 +28,7 @@ enrutador.get('/:id', obtenerReservaPorId);
 enrutador.put('/:id', actualizarReserva);
 enrutador.put('/:id/estado', cambiarEstadoReserva);
 enrutador.delete('/:id', eliminarReserva);
+
+enrutador.put('/:id/checkin', realizarCheckinReserva);
 
 module.exports = enrutador;
