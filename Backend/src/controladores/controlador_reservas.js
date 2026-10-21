@@ -627,7 +627,6 @@ const crearReservaTelegram = async (peticion, respuesta) => {
     return respuesta.status(400).json({ mensaje: 'Faltan datos obligatorios para registrar la reserva de Telegram.' });
   }
 
-
   const hoyStr = new Date().toISOString().split('T')[0];
   if (fecha_checkin < hoyStr) {
     return respuesta.status(400).json({
@@ -635,11 +634,11 @@ const crearReservaTelegram = async (peticion, respuesta) => {
     });
   }
 
-
   const cliente = await conexion.connect();
   try {
     await cliente.query('BEGIN');
 
+    // 1. Insertar la reserva con los datos de Telegram
     const consultaSQL = `
       INSERT INTO reserva (id_huesped, codigo_habitacion, id_usuario, fecha_checkin, fecha_checkout, cantidad_huespedes, estado, monto_pagado, id_telegram, usuario_telegram)
       VALUES ($1, $2, 1, $3, $4, $5, 'PENDIENTE', $6, $7, $8)
@@ -650,6 +649,15 @@ const crearReservaTelegram = async (peticion, respuesta) => {
     ]);
 
     const nuevaReserva = resultado.rows[0];
+
+    // 2. Registrar o actualizar el vínculo en la tabla huesped_telegram
+    await cliente.query(`
+      INSERT INTO huesped_telegram (id_huesped, id_telegram, usuario_telegram)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (id_huesped) 
+      DO UPDATE SET id_telegram = EXCLUDED.id_telegram, usuario_telegram = EXCLUDED.usuario_telegram;
+    `, [id_huesped, id_telegram, usuario_telegram]);
+
     await cliente.query('COMMIT');
 
     return respuesta.status(201).json({
@@ -719,13 +727,12 @@ const enviarNotificacionTelegram = async (peticion, respuesta) => {
 
 const realizarCheckinReserva = async (peticion, respuesta) => {
   const { id } = peticion.params; 
-  const { cantidad_acompanantes, cantidad_maletas, observaciones, id_usuario } = peticion.body;
+  const { cantidad_acompanantes, cantidad_maletas, observaciones, id_usuario, nueva_fecha_checkin } = peticion.body;
 
   const cliente = await conexion.connect();
   try {
     await cliente.query('BEGIN');
 
-    // Verificar si la reserva existe
     const reservaRes = await cliente.query('SELECT * FROM reserva WHERE codigo_reserva = $1', [id]);
     if (reservaRes.rows.length === 0) {
       await cliente.query('ROLLBACK');
@@ -733,12 +740,21 @@ const realizarCheckinReserva = async (peticion, respuesta) => {
     }
 
     const reserva = reservaRes.rows[0];
+    let mensajeAuditoria = `Realizó el check-in de la reserva N° ${id} en la habitación N° ${reserva.codigo_habitacion}`;
 
-    // Actualizar estado de la reserva a CHECKIN
-    await cliente.query(
-      "UPDATE reserva SET estado = 'CHECKIN' WHERE codigo_reserva = $1",
-      [id]
-    );
+    // Si se indicó una nueva fecha de check-in anticipada, la actualizamos en la reserva
+    if (nueva_fecha_checkin) {
+      await cliente.query(
+        "UPDATE reserva SET fecha_checkin = $1, estado = 'CHECKIN' WHERE codigo_reserva = $2",
+        [nueva_fecha_checkin, id]
+      );
+      mensajeAuditoria = `Actualizó la fecha de check-in al ${nueva_fecha_checkin} y realizó el check-in de la reserva N° ${id}`;
+    } else {
+      await cliente.query(
+        "UPDATE reserva SET estado = 'CHECKIN' WHERE codigo_reserva = $1",
+        [id]
+      );
+    }
 
     await cliente.query(
       "UPDATE habitacion SET estado = 'Ocupada' WHERE codigo_habitacion = $1",
@@ -761,11 +777,7 @@ const realizarCheckinReserva = async (peticion, respuesta) => {
     );
 
     const usuarioResponsable = id_usuario || 1;
-    await registrarAuditoria(
-      usuarioResponsable,
-      'Reservas',
-      `Realizó el check-in de la reserva N° ${id} en la habitación N° ${reserva.codigo_habitacion}`
-    );
+    await registrarAuditoria(usuarioResponsable, 'Reservas', mensajeAuditoria);
 
     await cliente.query('COMMIT');
     return respuesta.status(200).json({ mensaje: 'Check-in realizado con éxito y habitación ocupada.' });
