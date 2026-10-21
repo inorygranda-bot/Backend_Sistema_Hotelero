@@ -749,6 +749,9 @@ const obtenerReporteReservas = async (peticion, respuesta) => {
     return respuesta.status(500).json({ 
       mensaje: 'Error al consultar los datos para el reporte de reservas.' 
     });
+    } // <--- 1. Cierra el bloque catch
+};
+
 const realizarCheckinReserva = async (peticion, respuesta) => {
   const { id } = peticion.params; 
   const { cantidad_acompanantes, cantidad_maletas, observaciones, id_usuario, nueva_fecha_checkin } = peticion.body;
