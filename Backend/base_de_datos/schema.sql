@@ -309,3 +309,5 @@ CREATE TABLE IF NOT EXISTS "huesped_telegram" (
 	CONSTRAINT "huesped_telegram_fk_huesped" 
 	FOREIGN KEY ("id_huesped") REFERENCES "huesped"("id_huesped") ON DELETE CASCADE
 );
+
+ALTER TABLE "huesped" ADD COLUMN IF NOT EXISTS "num_documento" varchar(255);

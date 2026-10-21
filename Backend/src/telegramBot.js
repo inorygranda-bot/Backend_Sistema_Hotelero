@@ -111,14 +111,30 @@ bot.command('disponibles', async (ctx) => {
         if (temporadaNormal) idTemporadaObjetivo = temporadaNormal.id_temporada;
       }
 
-      const tarifaCoincidente = tarifas.find((t) => {
-        const matchTipo = String(t.id_tipo_habitacion) === String(hab.id_tipo_habitacion);
+      // 1. Filtrar todas las tarifas que coincidan con el tipo de habitación y estén activas
+      const tarifasValidas = tarifas.filter((t) => {
+        const matchTipo = String(t.id_tipo_habitacion) === String(hab.id_tipo_habitacion); // (o t.id_tipo_hab según tu BD)
         const matchEstado = t.estado?.toLowerCase() === 'activa';
-        const matchTemp = idTemporadaObjetivo ? (Array.isArray(t.id_temporadas)
-          ? t.id_temporadas.some(idT => String(idT) === String(idTemporadaObjetivo))
-          : String(t.id_temporada) === String(idTemporadaObjetivo)) : true;
-        return matchTipo && matchEstado && matchTemp;
+        return matchTipo && matchEstado;
       });
+
+      // 2. Buscar si hay una tarifa específica para la temporada encontrada (ej. Diciembre)
+      let tarifaCoincidente = null;
+      if (temporadaEncontrada) {
+        tarifaCoincidente = tarifasValidas.find((t) => {
+          return Array.isArray(t.id_temporadas)
+            ? t.id_temporadas.some((idT) => String(idT) === String(temporadaEncontrada.id_temporada))
+            : String(t.id_temporada) === String(temporadaEncontrada.id_temporada);
+        });
+      }
+
+      // 3. Si no hay temporada especial (como en octubre), buscar estrictamente la tarifa base o normal
+      if (!tarifaCoincidente) {
+        tarifaCoincidente = tarifasValidas.find((t) => {
+          const nombre = (t.nombre_tarifa || '').toLowerCase();
+          return nombre.includes('base') || nombre.includes('normal') || nombre.includes('baja');
+        }) || tarifasValidas[0];
+      }
 
       const precioNoche = tarifaCoincidente?.precio_base || hab.precio_base || 120;
 
