@@ -76,7 +76,7 @@ const obtenerReservas = async (peticion, respuesta) => {
       LEFT JOIN tarifa_temporada tt ON thab.id_tarifa = tt.id_tarifa
       LEFT JOIN temporada tp ON tt.id_temporada = tp.id_temporada
       LEFT JOIN tarifa t ON thab.id_tarifa = t.id_tarifa AND t.estado = 'Activa'
-      WHERE r.id_telegram IS NULL -- <--- EXCLUYE LAS DE TELEGRAM AQUÍ
+      WHERE r.id_telegram IS NULL
       ORDER BY r.codigo_reserva DESC;
     `;
 
@@ -108,17 +108,10 @@ const crearReserva = async (peticion, respuesta) => {
     });
   }
 
-  // Validar que la fecha de check-in no sea una fecha pasada
   const hoyStr = new Date().toISOString().split('T')[0];
   if (fecha_checkin < hoyStr) {
     return respuesta.status(400).json({
       mensaje: 'La fecha de check-in no puede ser anterior a la fecha actual.'
-    });
-  }
-
-  if (new Date(fecha_checkout) <= new Date(fecha_checkin)) {
-    return respuesta.status(400).json({
-      mensaje: 'La fecha de check-out debe ser posterior a la fecha de check-in.'
     });
   }
 
@@ -268,12 +261,6 @@ const actualizarReserva = async (peticion, respuesta) => {
   if (fecha_checkin < hoyStr) {
     return respuesta.status(400).json({
       mensaje: 'La fecha de check-in no puede ser anterior a la fecha actual.'
-    });
-  }
-
-  if (new Date(fecha_checkout) <= new Date(fecha_checkin)) {
-    return respuesta.status(400).json({
-      mensaje: 'La fecha de check-out debe ser posterior a la fecha de check-in.'
     });
   }
 
@@ -466,7 +453,6 @@ const cambiarEstadoReserva = async (peticion, respuesta) => {
     const nuevoEstado = estado.toUpperCase();
 
     let resultado;
-    // Al confirmar o cancelar, liberamos el id_telegram para que pase a reservas normales
     if (id_telegram && (nuevoEstado === 'CONFIRMADA' || nuevoEstado === 'CANCELADA')) {
       resultado = await conexion.query(
         'UPDATE reserva SET estado = $1, id_telegram = NULL, usuario_telegram = NULL WHERE codigo_reserva = $2 RETURNING *;',
@@ -619,14 +605,12 @@ const crearReservaTelegram = async (peticion, respuesta) => {
     return respuesta.status(400).json({ mensaje: 'Faltan datos obligatorios para registrar la reserva de Telegram.' });
   }
 
-
   const hoyStr = new Date().toISOString().split('T')[0];
   if (fecha_checkin < hoyStr) {
     return respuesta.status(400).json({
       mensaje: 'La fecha de check-in no puede ser anterior a la fecha actual.'
     });
   }
-
 
   const cliente = await conexion.connect();
   try {
@@ -658,7 +642,7 @@ const crearReservaTelegram = async (peticion, respuesta) => {
 };
 
 const enviarNotificacionTelegram = async (peticion, respuesta) => {
-  const { id } = peticion.params; // codigo_reserva
+  const { id } = peticion.params;
   const { mensaje } = peticion.body;
 
   if (!mensaje || !mensaje.trim()) {
@@ -709,6 +693,39 @@ const enviarNotificacionTelegram = async (peticion, respuesta) => {
   }
 };
 
+// Reporte detallado de reservas para exportar
+const obtenerReporteReservas = async (peticion, respuesta) => {
+  try {
+    const consultaSQL = `
+      SELECT 
+        r.codigo_reserva AS clave,
+        h.id_huesped,
+        h.nombre AS nombre_huesped,
+        h.tipo_documento || '-' || h.num_documento AS documento,
+        hab.codigo_habitacion AS habitacion_asignada,
+        th.nombre_tipo AS tipo_habitacion,
+        hab.piso,
+        r.fecha_checkin,
+        r.fecha_checkout,
+        r.cantidad_huespedes,
+        r.estado,
+        r.monto_pagado
+      FROM reserva r
+      JOIN huesped h ON r.id_huesped = h.id_huesped
+      JOIN habitacion hab ON r.codigo_habitacion = hab.codigo_habitacion
+      JOIN tipo_habitacion th ON hab.id_tipo_habitacion = th.id_tipo_habitacion
+      ORDER BY r.codigo_reserva DESC;
+    `;
+
+    const resultado = await conexion.query(consultaSQL);
+    return respuesta.status(200).json(resultado.rows);
+  } catch (error) {
+    console.error('Error al generar el reporte de reservas:', error);
+    return respuesta.status(500).json({ 
+      mensaje: 'Error al consultar los datos para el reporte de reservas.' 
+    });
+  }
+};
 
 module.exports = {
   obtenerReservas,
@@ -719,5 +736,6 @@ module.exports = {
   eliminarReserva,
   obtenerReservasTelegram,
   crearReservaTelegram,
-  enviarNotificacionTelegram
+  enviarNotificacionTelegram,
+  obtenerReporteReservas
 };

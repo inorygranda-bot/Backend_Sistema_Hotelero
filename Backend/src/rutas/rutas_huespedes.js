@@ -2,6 +2,7 @@ const express = require('express');
 const enrutador = express.Router();
 const {
   obtenerHuespedes,
+  obtenerReporteHuespedes,
   obtenerHuespedPorId,
   crearHuesped,
   actualizarHuesped,
@@ -11,6 +12,7 @@ const {
 
 // Definición de Endpoints
 enrutador.get('/', obtenerHuespedes);
+enrutador.get('/reporte/excel', obtenerReporteHuespedes);
 enrutador.get('/:id', obtenerHuespedPorId);
 enrutador.post('/', crearHuesped);
 enrutador.put('/:id', actualizarHuesped);

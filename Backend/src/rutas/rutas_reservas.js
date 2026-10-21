@@ -9,11 +9,15 @@ const {
   eliminarReserva,
   obtenerReservasTelegram,
   crearReservaTelegram,
-  enviarNotificacionTelegram
+  enviarNotificacionTelegram,
+  obtenerReporteReservas
 } = require('../controladores/controlador_reservas');
 
 enrutador.get('/', obtenerReservas);
 enrutador.post('/', crearReserva);
+
+// Ruta del reporte (debe ir antes de /:id)
+enrutador.get('/reporte/excel', obtenerReporteReservas);
 
 enrutador.get('/telegram', obtenerReservasTelegram);
 enrutador.post('/telegram', crearReservaTelegram);
