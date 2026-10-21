@@ -44,17 +44,19 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
     const usuarioRes = await conexion.query('SELECT nombre FROM usuario WHERE id_usuario = $1', [id_usuario || 1]);
     const nombreUsuario = usuarioRes.rows[0]?.nombre || 'Administrador';
 
-    // 1. Consultar huéspedes con CHECKIN y su respectivo id_telegram registrado
+    // 1. Consultar huéspedes con CHECKIN uniendo r.id_telegram Y ht.id_telegram de la tabla huesped_telegram
     const consultaSQL = `
       SELECT 
+        h.id_huesped,
         h.nombre,
         r.codigo_habitacion,
         COALESCE(hab.piso, 'S/P') AS piso,
         COALESCE(h.telefono, 'Sin Teléfono') AS telefono,
-        r.id_telegram
+        COALESCE(r.id_telegram, ht.id_telegram) AS id_telegram
       FROM reserva r
       JOIN huesped h ON r.id_huesped = h.id_huesped
       LEFT JOIN habitacion hab ON r.codigo_habitacion = hab.codigo_habitacion
+      LEFT JOIN huesped_telegram ht ON h.id_huesped = ht.id_huesped
       WHERE r.estado = 'CHECKIN'
       ORDER BY r.codigo_habitacion ASC;
     `;
@@ -73,7 +75,7 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
     const fechaHora = new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' });
     const urlApiTelegram = `https://api.telegram.org/bot${tokenBot}/sendMessage`;
 
-    // 2. Enviar el reporte ejecutivo a la central de administración (.env)
+    // 2. Enviar reporte administrativo
     const textoReporteAdmin = 
       `*[ REPORTE OPERATIVO DE EMERGENCIA ]*\n` +
       `----------------------------------------\n` +
@@ -94,7 +96,7 @@ const enviarMensajeMasivoAlerta = async (peticion, respuesta) => {
       });
     }
 
-    // 3. Enviar la advertencia directamente a cada huésped que tenga Telegram registrado
+    // 3. Enviar advertencia individual a cada huésped con Telegram
     let huespedesNotificados = 0;
     for (const h of huespedes) {
       if (h.id_telegram) {
