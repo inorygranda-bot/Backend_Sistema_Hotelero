@@ -245,8 +245,30 @@ const eliminarHuesped = async (peticion, respuesta) => {
   }
 };
 
+const obtenerReporteHuespedes = async (peticion, respuesta) => {
+  try {
+    const consultaSQL = `
+      SELECT 
+        h.id_huesped,
+        h.tipo_documento,
+        h.num_documento,
+        h.nombre,
+        h.telefono,
+        h.correo,
+        h.estado
+      FROM huesped h
+      ORDER BY h.id_huesped DESC;
+    `;
+    const resultado = await conexion.query(consultaSQL);
+    return respuesta.status(200).json(resultado.rows);
+  } catch (error) {
+    console.error('Error al generar reporte de huéspedes:', error);
+    return respuesta.status(500).json({ mensaje: 'Error al generar el reporte de huéspedes en Excel.' });
+  }
+};
 module.exports = {
   obtenerHuespedes,
+  obtenerReporteHuespedes, // <--- Tiene que estar aquí
   obtenerHuespedPorId,
   crearHuesped,
   actualizarHuesped,
