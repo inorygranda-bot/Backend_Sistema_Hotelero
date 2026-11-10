@@ -20,9 +20,11 @@ enrutador.post('/', crearReserva);
 
 enrutador.get('/reporte/excel', obtenerReporteReservas);
 enrutador.post('/reporte/correo', enviarReporteReservasCorreo);
+enrutador.put('/:id/estado', cambiarEstadoReserva);  
+enrutador.patch('/:id/estado', cambiarEstadoReserva);
 
 enrutador.get('/telegram/listar', obtenerReservasTelegram);
-enrutador.post('/telegram/crear', crearReservaTelegram);
+enrutador.post('/telegram', crearReservaTelegram);
 enrutador.post('/telegram/notificar', enviarNotificacionTelegram);
 
 enrutador.get('/:id', obtenerReservaPorId);

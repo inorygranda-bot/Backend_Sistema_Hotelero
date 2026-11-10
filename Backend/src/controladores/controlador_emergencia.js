@@ -2,6 +2,83 @@ const conexion = require('../config/conexion');
 const bcrypt = require('bcrypt');
 const axios = require('axios');
 const { registrarAuditoria } = require('./controlador_auditoria');
+const nodemailer = require('nodemailer');
+
+const enviarReporteEmergenciaCorreo = async (peticion, respuesta) => {
+  const { correo_destino, estado_seguro, piso, busqueda } = peticion.body;
+
+  if (!correo_destino || !correo_destino.trim()) {
+    return respuesta.status(400).json({ mensaje: 'Debe especificar un correo electrónico de destino.' });
+  }
+
+  try {
+    const consultaSQL = `
+      SELECT 
+        h.id_huesped,
+        h.nombre,
+        COALESCE(h.num_documento, 'S/D') AS num_documento,
+        r.codigo_habitacion,
+        COALESCE(hab.piso, 'S/P') AS piso,
+        h.telefono
+      FROM reserva r
+      JOIN huesped h ON r.id_huesped = h.id_huesped
+      LEFT JOIN habitacion hab ON r.codigo_habitacion = hab.codigo_habitacion
+      WHERE r.estado = 'CHECKIN'
+      ORDER BY r.codigo_habitacion ASC;
+    `;
+    const resultado = await conexion.query(consultaSQL);
+    const registros = resultado.rows;
+
+    const filasTablaHTML = registros.map((h, i) => `
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="padding: 8px; font-size: 12px; color: #334155;">${i + 1}</td>
+        <td style="padding: 8px; font-size: 12px; font-weight: 600;">${h.nombre}</td>
+        <td style="padding: 8px; font-size: 12px;">Hab. ${h.codigo_habitacion}</td>
+        <td style="padding: 8px; font-size: 12px;">Piso ${h.piso}</td>
+        <td style="padding: 8px; font-size: 12px;">${h.telefono || 'N/A'}</td>
+      </tr>
+    `).join('');
+
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER || 'inorygranda@gmail.com',
+        pass: process.env.EMAIL_PASS || 'jael cwdx lyfe vivl'
+      }
+    });
+
+    await transporter.sendMail({
+      from: '"Sistema Hotelero IUJO" <no-reply@hotel.com>',
+      to: correo_destino,
+      subject: `Reporte de Evacuación y Conteo de Huéspedes - ${new Date().toLocaleDateString()}`,
+      html: `
+        <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 24px; font-family: sans-serif; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 8px;">
+          <h2 style="font-size: 16px; font-weight: 700; color: #dc2626; text-transform: uppercase;">Reporte de Emergencia y Evacuación</h2>
+          <p>Listado oficial de huéspedes activos durante el protocolo de seguridad.</p>
+          <table style="width: 100%; border-collapse: collapse; margin-top: 1rem;">
+            <thead>
+              <tr style="border-bottom: 2px solid #cbd5e1; text-align: left;">
+                <th style="padding: 8px;">#</th>
+                <th style="padding: 8px;">Huésped</th>
+                <th style="padding: 8px;">Habitación</th>
+                <th style="padding: 8px;">Piso</th>
+                <th style="padding: 8px;">Teléfono</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filasTablaHTML}
+            </tbody>
+          </table>
+        </div>
+      `
+    });
+
+    return respuesta.status(200).json({ mensaje: 'Reporte de emergencia enviado por correo exitosamente.' });
+  } catch (error) {
+    console.error('Error al enviar correo de emergencia:', error);
+    return respuesta.status(500).json({ mensaje: 'Error al intentar despachar el correo electrónico.' });
+  }
+};
 
 const obtenerHuespedesActivosEmergencia = async (peticion, respuesta) => {
   try {
@@ -304,5 +381,6 @@ module.exports = {
   activarEmergencia,
   desactivarEmergencia,
   enviarMensajeMasivoAlerta,
+  enviarReporteEmergenciaCorreo,
   registrarMarcajeHuespedSeguro 
 };
