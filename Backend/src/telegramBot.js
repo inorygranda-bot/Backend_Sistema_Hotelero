@@ -1,8 +1,13 @@
+require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
-const API_BACKEND = 'http://localhost:3000/api';
+const envApiBackend = (process.env.API_BACKEND || '').trim().replace(/\/+$/, '');
+const rawApiBackend = envApiBackend || `http://localhost:${process.env.PORT || 3000}/api`;
+const API_BACKEND = rawApiBackend.endsWith('/api')
+  ? rawApiBackend
+  : `${rawApiBackend}/api`;
 
 const sesionesUsuarios = {};
 
