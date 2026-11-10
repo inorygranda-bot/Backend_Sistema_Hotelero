@@ -6,6 +6,8 @@ const {
   crearHabitacion,
   actualizarHabitacion,
   cambiarEstadoHabitacion,
+  enviarReporteHabitacionesCorreo,
+  obtenerReporteHabitaciones,
   eliminarHabitacion
 } = require('../controladores/controlador_habitaciones');
 
@@ -15,5 +17,7 @@ enrutador.post('/', crearHabitacion);
 enrutador.put('/:id', actualizarHabitacion);
 enrutador.post('/:id/cambiar-estado', cambiarEstadoHabitacion);
 enrutador.delete('/:id', eliminarHabitacion);
+enrutador.get('/reporte/excel', obtenerReporteHabitaciones);
+enrutador.post('/reporte/correo', enviarReporteHabitacionesCorreo);
 
 module.exports = enrutador;

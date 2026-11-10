@@ -1,5 +1,6 @@
 const conexion = require('../config/conexion');
 const { registrarAuditoria } = require('./controlador_auditoria');
+const nodemailer = require('nodemailer');
 
 const obtenerPagos = async (peticion, respuesta) => {
   try {
@@ -34,6 +35,105 @@ const obtenerPagos = async (peticion, respuesta) => {
   }
 };
 
+const enviarReportePagosCorreo = async (peticion, respuesta) => {
+  const { correo_destino, metodo_pago, moneda, banco, estado, fecha_desde, fecha_hasta } = peticion.body;
+
+  if (!correo_destino || !correo_destino.trim()) {
+    return respuesta.status(400).json({ mensaje: 'Debe especificar un correo electrónico de destino.' });
+  }
+
+  try {
+    let consultaSQL = `
+      SELECT p.*, h.nombre AS nombre_huesped, b_dest.nombre_banco AS banco_destino
+      FROM pago p
+      JOIN reserva r ON p.codigo_reserva = r.codigo_reserva
+      JOIN huesped h ON r.id_huesped = h.id_huesped
+      LEFT JOIN transaccion_bancaria tb ON p.id_pago = tb.id_pago
+      LEFT JOIN banco b_dest ON tb.id_banco_destino = b_dest.id_banco
+      WHERE 1=1
+    `;
+    const valores = [];
+    let idx = 1;
+
+    if (metodo_pago && metodo_pago !== 'TODOS') {
+      consultaSQL += ` AND p.metodo_pago ILIKE $${idx}`;
+      valores.push(metodo_pago);
+      idx++;
+    }
+    if (moneda && moneda !== 'TODAS') {
+      consultaSQL += ` AND p.moneda = $${idx}`;
+      valores.push(moneda);
+      idx++;
+    }
+    if (banco && banco !== 'TODOS') {
+      consultaSQL += ` AND b_dest.nombre_banco ILIKE $${idx}`;
+      valores.push(banco);
+      idx++;
+    }
+    if (fecha_desde) {
+      consultaSQL += ` AND p.fecha_pago >= $${idx}`;
+      valores.push(fecha_desde);
+      idx++;
+    }
+    if (fecha_hasta) {
+      consultaSQL += ` AND p.fecha_pago <= $${idx}`;
+      valores.push(fecha_hasta);
+      idx++;
+    }
+
+    consultaSQL += ` ORDER BY p.id_pago DESC;`;
+    const resultado = await conexion.query(consultaSQL, valores);
+    const registros = resultado.rows;
+
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER || 'inorygranda@gmail.com',
+        pass: process.env.EMAIL_PASS || 'jael cwdx lyfe vivl'
+      }
+    });
+
+    const filasHTML = registros.map(p => `
+  <tr>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;">#PAG-${p.id_pago}</td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd; font-weight: 600;">N° ${p.codigo_reserva}</td> <!-- AGREGAR ESTO -->
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;">${p.nombre_huesped}</td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd;">${p.metodo_pago}</td>
+    <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">$${Number(p.monto).toFixed(2)} ${p.moneda}</td>
+  </tr>
+`).join('');
+
+    await transporter.sendMail({
+      from: '"Sistema Hotelero" <no-reply@hotel.com>',
+      to: correo_destino,
+      subject: `Reporte de Pagos e Ingresos - ${new Date().toLocaleDateString()}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto;">
+          <h2>Reporte de Pagos y Transacciones</h2>
+          <p>Total de registros filtrados: <strong>${registros.length}</strong></p>
+          <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="background: #f8fafc; text-align: left;">
+                <th style="padding: 8px;">ID</th>
+                <th style="padding: 8px;">N° Reserva</th>
+                <th style="padding: 8px;">Huésped</th>
+                <th style="padding: 8px;">Método</th>
+                <th style="padding: 8px; text-align: right;">Monto</th>
+              </tr>
+            </thead>
+            <tbody>${filasHTML}</tbody>
+          </table>
+        </div>
+      `
+    });
+
+    return respuesta.status(200).json({ mensaje: 'Reporte enviado por correo exitosamente.' });
+  } catch (error) {
+    console.error('Error al enviar correo:', error);
+    return respuesta.status(500).json({ mensaje: 'Error al enviar el correo electrónico.' });
+  }
+};
+
 const obtenerPagoPorId = async (peticion, respuesta) => {
   const { id } = peticion.params;
   try {
@@ -56,15 +156,15 @@ const obtenerPagoPorId = async (peticion, respuesta) => {
 };
 
 const crearPago = async (peticion, respuesta) => {
-  const { 
-    codigo_reserva, 
-    metodo_pago, 
-    moneda, 
-    monto, 
+  const {
+    codigo_reserva,
+    metodo_pago,
+    moneda,
+    monto,
     id_banco_destino,
-    num_referencia, 
+    num_referencia,
     descripcion,
-    tasa_bcv 
+    tasa_bcv
   } = peticion.body;
 
   if (!codigo_reserva || !metodo_pago || !moneda || monto === undefined || monto === '' || !descripcion) {
@@ -135,7 +235,7 @@ const crearPago = async (peticion, respuesta) => {
         VALUES ($1, $2, $3, $4);
       `, [
         idPagoGenerado,
-        id_banco_destino, 
+        id_banco_destino,
         id_banco_destino,
         num_referencia ? num_referencia.trim() : `REF-${Date.now()}`
       ]);
@@ -154,8 +254,8 @@ const crearPago = async (peticion, respuesta) => {
     await cliente.query('COMMIT');
 
     await registrarAuditoria(
-      idUsuarioResponsable, 
-      4, 
+      idUsuarioResponsable,
+      4,
       `Registró un pago de ${monto} ${moneda.trim()} (${metodo_pago.trim()}) para la reserva N° ${codigo_reserva} del huésped "${nombreHuesped}"`
     );
 
@@ -187,7 +287,7 @@ const eliminarPago = async (peticion, respuesta) => {
       JOIN huesped h ON r.id_huesped = h.id_huesped
       WHERE p.id_pago = $1
     `, [id]);
-    
+
     if (consultaPago.rows.length === 0) {
       await cliente.query('ROLLBACK');
       return respuesta.status(404).json({ mensaje: 'El pago a eliminar no existe.' });
@@ -196,7 +296,7 @@ const eliminarPago = async (peticion, respuesta) => {
     const { codigo_reserva, monto, moneda, nombre_huesped } = consultaPago.rows[0];
     let montoEnUSD = Number(monto);
     if (moneda.toUpperCase() === 'VES') {
-      montoEnUSD = Number(monto) / 872.39; 
+      montoEnUSD = Number(monto) / 872.39;
     }
 
     const resultadoEliminar = await cliente.query('DELETE FROM pago WHERE id_pago = $1 RETURNING *;', [id]);
@@ -210,8 +310,8 @@ const eliminarPago = async (peticion, respuesta) => {
     await cliente.query('COMMIT');
 
     await registrarAuditoria(
-      idUsuarioResponsable, 
-      4, 
+      idUsuarioResponsable,
+      4,
       `Eliminó el registro de pago de ${monto} ${moneda} correspondiente a la reserva N° ${codigo_reserva} de "${nombre_huesped}"`
     );
 
@@ -233,5 +333,6 @@ module.exports = {
   obtenerPagos,
   obtenerPagoPorId,
   crearPago,
+  enviarReportePagosCorreo,
   eliminarPago
 };

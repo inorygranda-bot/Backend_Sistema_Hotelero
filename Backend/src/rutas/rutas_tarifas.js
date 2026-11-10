@@ -9,6 +9,7 @@ const {
   actualizarTarifa,
   eliminarTarifa,
   duplicarTarifa,
+  enviarReporteTarifasCorreo,
   obtenerTasaBCV
 } = require('../controladores/controlador_tarifas');
 
@@ -22,5 +23,6 @@ router.post('/', crearTarifa);
 router.put('/:id', actualizarTarifa);
 router.delete('/:id', eliminarTarifa);
 router.post('/:id/duplicar', duplicarTarifa);
+router.post('/reporte/correo', enviarReporteTarifasCorreo);
 
 module.exports = router;

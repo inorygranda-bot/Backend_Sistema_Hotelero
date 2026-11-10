@@ -7,6 +7,7 @@ const {
   crearHuesped,
   actualizarHuesped,
   cambiarEstadoHuesped,
+  enviarReporteHuespedesCorreo,
   eliminarHuesped
 } = require('../controladores/controlador_huespedes');
 
@@ -18,5 +19,6 @@ enrutador.post('/', crearHuesped);
 enrutador.put('/:id', actualizarHuesped);
 enrutador.patch('/:id/estado', cambiarEstadoHuesped);
 enrutador.delete('/:id', eliminarHuesped);
+enrutador.post('/reporte/correo', enviarReporteHuespedesCorreo);
 
 module.exports = enrutador;

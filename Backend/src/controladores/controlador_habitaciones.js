@@ -1,9 +1,40 @@
 const conexion = require('../config/conexion');
 const { registrarAuditoria } = require('./controlador_auditoria');
+const nodemailer = require('nodemailer');
+
+const filtrarHabitacionesQuery = (query, baseSQL = '') => {
+  const { estado, tipo, piso, busqueda } = query;
+  let consultaSQL = baseSQL;
+  const valores = [];
+  let idx = 1;
+
+  if (estado && estado !== 'TODAS' && estado !== 'undefined' && estado !== 'null') {
+    consultaSQL += ` AND h.estado ILIKE $${idx}`;
+    valores.push(estado);
+    idx++;
+  }
+  if (tipo && tipo !== 'TODOS' && tipo !== 'undefined' && tipo !== 'null') {
+    consultaSQL += ` AND th.nombre_tipo ILIKE $${idx}`;
+    valores.push(tipo);
+    idx++;
+  }
+  if (piso && piso !== 'TODOS' && piso !== 'undefined' && piso !== 'null') {
+    consultaSQL += ` AND h.piso ILIKE $${idx}`;
+    valores.push(piso);
+    idx++;
+  }
+  if (busqueda && busqueda.trim() !== '' && busqueda !== 'undefined' && busqueda !== 'null') {
+    consultaSQL += ` AND (h.codigo_habitacion::text ILIKE $${idx} OR th.nombre_tipo ILIKE $${idx} OR COALESCE(hu.nombre, '') ILIKE $${idx} OR h.amenidades ILIKE $${idx})`;
+    valores.push(`%${busqueda.trim()}%`);
+    idx++;
+  }
+
+  return { consultaSQL, valores };
+};
 
 const obtenerHabitaciones = async (peticion, respuesta) => {
   try {
-    const consultaSQL = `
+    let baseSQL = `
       SELECT DISTINCT ON (h.codigo_habitacion)
         h.codigo_habitacion,
         h.id_tipo_habitacion,
@@ -13,29 +44,142 @@ const obtenerHabitaciones = async (peticion, respuesta) => {
         h.estado,
         h.amenidades,
         COALESCE(t.precio_base, 120.00) AS precio_base,
-        COALESCE(t.ocupacion_base, 2) AS ocupacion_base,
-        COALESCE(t.huesped_adicional, 15.00) AS huesped_adicional,
-        COALESCE(t.iva, 16.00) AS iva,
         hu.nombre AS nombre_huesped,
-        TO_CHAR(r.fecha_checkin, 'DD/MM/YYYY') AS fecha_checkin,
-        TO_CHAR(r.fecha_checkout, 'DD/MM/YYYY') AS fecha_checkout,
-        r.monto_pagado
+        r.fecha_checkin,
+        r.fecha_checkout
       FROM habitacion h
       JOIN tipo_habitacion th ON h.id_tipo_habitacion = th.id_tipo_habitacion
       LEFT JOIN tarifa_hab thab ON th.id_tipo_habitacion = thab.id_tipo_hab
       LEFT JOIN tarifa t ON thab.id_tarifa = t.id_tarifa AND t.estado = 'Activa'
       LEFT JOIN reserva r ON h.codigo_habitacion = r.codigo_habitacion AND r.estado IN ('PENDIENTE', 'CHECKIN', 'CONFIRMADA')
       LEFT JOIN huesped hu ON r.id_huesped = hu.id_huesped
-      ORDER BY h.codigo_habitacion ASC, t.id_tarifa DESC;
+      WHERE 1=1
     `;
+    const { consultaSQL, valores } = filtrarHabitacionesQuery(peticion.query, baseSQL);
+    const consultaFinal = consultaSQL + ` ORDER BY h.codigo_habitacion ASC, t.id_tarifa DESC;`;
     
-    const resultado = await conexion.query(consultaSQL);
+    const resultado = await conexion.query(consultaFinal, valores);
     return respuesta.status(200).json(resultado.rows);
   } catch (error) {
     console.error('Error al obtener habitaciones:', error);
-    return respuesta.status(500).json({ 
-      mensaje: 'Error al consultar la lista de habitaciones en la base de datos.' 
+    return respuesta.status(500).json({ mensaje: 'Error al consultar las habitaciones.' });
+  }
+};
+
+const obtenerReporteHabitaciones = async (peticion, respuesta) => {
+  try {
+    let baseSQL = `
+      SELECT 
+        h.codigo_habitacion AS clave,
+        h.piso,
+        th.nombre_tipo AS tipo_habitacion,
+        h.capacidad,
+        h.estado,
+        h.amenidades,
+        COALESCE(t.precio_base, 120.00) AS precio_base,
+        hu.nombre AS nombre_huesped,
+        r.fecha_checkin,
+        r.fecha_checkout
+      FROM habitacion h
+      JOIN tipo_habitacion th ON h.id_tipo_habitacion = th.id_tipo_habitacion
+      LEFT JOIN tarifa_hab thab ON th.id_tipo_habitacion = thab.id_tipo_hab
+      LEFT JOIN tarifa t ON thab.id_tarifa = t.id_tarifa AND t.estado = 'Activa'
+      LEFT JOIN reserva r ON h.codigo_habitacion = r.codigo_habitacion AND r.estado IN ('PENDIENTE', 'CHECKIN', 'CONFIRMADA')
+      LEFT JOIN huesped hu ON r.id_huesped = hu.id_huesped
+      WHERE 1=1
+    `;
+    const { consultaSQL, valores } = filtrarHabitacionesQuery(peticion.query, baseSQL);
+    const consultaFinal = consultaSQL + ` ORDER BY h.codigo_habitacion ASC;`;
+
+    const resultado = await conexion.query(consultaFinal, valores);
+    return respuesta.status(200).json(resultado.rows);
+  } catch (error) {
+    console.error('Error al generar reporte de habitaciones:', error);
+    return respuesta.status(500).json({ mensaje: 'Error al consultar los datos para el reporte de habitaciones.' });
+  }
+};
+
+const enviarReporteHabitacionesCorreo = async (peticion, respuesta) => {
+  const { correo_destino, estado, tipo, piso, busqueda } = peticion.body;
+
+  if (!correo_destino || !correo_destino.trim()) {
+    return respuesta.status(400).json({ mensaje: 'Debe especificar un correo electrónico de destino.' });
+  }
+
+  try {
+    let baseSQL = `
+      SELECT 
+        h.codigo_habitacion AS clave,
+        h.piso,
+        th.nombre_tipo AS tipo_habitacion,
+        h.capacidad,
+        h.estado,
+        COALESCE(t.precio_base, 120.00) AS precio_base,
+        hu.nombre AS nombre_huesped
+      FROM habitacion h
+      JOIN tipo_habitacion th ON h.id_tipo_habitacion = th.id_tipo_habitacion
+      LEFT JOIN tarifa_hab thab ON th.id_tipo_habitacion = thab.id_tipo_hab
+      LEFT JOIN tarifa t ON thab.id_tarifa = t.id_tarifa AND t.estado = 'Activa'
+      LEFT JOIN reserva r ON h.codigo_habitacion = r.codigo_habitacion AND r.estado IN ('PENDIENTE', 'CHECKIN', 'CONFIRMADA')
+      LEFT JOIN huesped hu ON r.id_huesped = hu.id_huesped
+      WHERE 1=1
+    `;
+    const { consultaSQL, valores } = filtrarHabitacionesQuery({ estado, tipo, piso, busqueda }, baseSQL);
+    const consultaFinal = consultaSQL + ` ORDER BY h.codigo_habitacion ASC;`;
+
+    const resultado = await conexion.query(consultaFinal, valores);
+    const registros = resultado.rows;
+
+    const filasTablaHTML = registros.map(h => `
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="padding: 10px 8px; font-size: 12px; color: #334155;">Hab. ${h.clave}</td>
+        <td style="padding: 10px 8px; font-size: 12px; color: #0f172a; font-weight: 600;">${h.tipo_habitacion}</td>
+        <td style="padding: 10px 8px; font-size: 12px; color: #64748b;">Piso ${h.piso}</td>
+        <td style="padding: 10px 8px; font-size: 12px; color: #2563eb; font-weight: 600;">${h.estado}</td>
+        <td style="padding: 10px 8px; font-size: 12px; color: #0f172a; text-align: right;">$${parseFloat(h.precio_base || 0).toFixed(2)}</td>
+      </tr>
+    `).join('');
+
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER || 'inorygranda@gmail.com',
+        pass: process.env.EMAIL_PASS || 'jael cwdx lyfe vivl'
+      }
     });
+
+    const htmlContenido = `
+      <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 24px; font-family: sans-serif; color: #1e293b; font-size: 13px; border: 1px solid #e2e8f0; border-radius: 8px;">
+        <h2 style="font-size: 16px; font-weight: 700; color: #0f172a; text-transform: uppercase;">Informe Operativo de Habitaciones</h2>
+        <p>Reporte consolidado del estado de habitaciones (Filtros aplicados).</p>
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="border-bottom: 2px solid #cbd5e1; text-align: left;">
+              <th style="padding: 8px;">Hab.</th>
+              <th style="padding: 8px;">Tipo</th>
+              <th style="padding: 8px;">Piso</th>
+              <th style="padding: 8px;">Estado</th>
+              <th style="padding: 8px; text-align: right;">Tarifa Base</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filasTablaHTML}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    await transporter.sendMail({
+      from: '"Sistema Hotelero IUJO" <no-reply@hotel.com>',
+      to: correo_destino,
+      subject: `Informe Operativo de Habitaciones - ${new Date().toLocaleDateString()}`,
+      html: htmlContenido
+    });
+
+    return respuesta.status(200).json({ mensaje: 'Reporte enviado por correo exitosamente.' });
+  } catch (error) {
+    console.error('Error al enviar correo de habitaciones:', error);
+    return respuesta.status(500).json({ mensaje: 'Error al intentar despachar el correo electrónico.' });
   }
 };
 
@@ -354,5 +498,7 @@ module.exports = {
   crearHabitacion,
   actualizarHabitacion,
   cambiarEstadoHabitacion,
+  enviarReporteHabitacionesCorreo,
+  obtenerReporteHabitaciones,
   eliminarHabitacion
 };

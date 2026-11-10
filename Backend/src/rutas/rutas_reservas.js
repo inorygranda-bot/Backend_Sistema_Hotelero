@@ -11,24 +11,24 @@ const {
   crearReservaTelegram,
   enviarNotificacionTelegram,
   obtenerReporteReservas,
+  enviarReporteReservasCorreo,
   realizarCheckinReserva
 } = require('../controladores/controlador_reservas');
 
 enrutador.get('/', obtenerReservas);
 enrutador.post('/', crearReserva);
 
-// Ruta del reporte (debe ir antes de /:id)
 enrutador.get('/reporte/excel', obtenerReporteReservas);
+enrutador.post('/reporte/correo', enviarReporteReservasCorreo);
 
-enrutador.get('/telegram', obtenerReservasTelegram);
-enrutador.post('/telegram', crearReservaTelegram);
-enrutador.post('/telegram/:id/notificar', enviarNotificacionTelegram);
+enrutador.get('/telegram/listar', obtenerReservasTelegram);
+enrutador.post('/telegram/crear', crearReservaTelegram);
+enrutador.post('/telegram/notificar', enviarNotificacionTelegram);
 
 enrutador.get('/:id', obtenerReservaPorId);
 enrutador.put('/:id', actualizarReserva);
-enrutador.put('/:id/estado', cambiarEstadoReserva);
+enrutador.patch('/:id/estado', cambiarEstadoReserva);
 enrutador.delete('/:id', eliminarReserva);
-
-enrutador.put('/:id/checkin', realizarCheckinReserva);
+enrutador.post('/:id/checkin', realizarCheckinReserva);
 
 module.exports = enrutador;

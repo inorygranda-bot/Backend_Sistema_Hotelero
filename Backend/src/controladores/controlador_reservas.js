@@ -1,6 +1,7 @@
 const conexion = require('../config/conexion');
 const { registrarAuditoria } = require('./controlador_auditoria');
 const axios = require('axios');
+const nodemailer = require('nodemailer');
 
 const actualizarEstadosAutomaticosPorFecha = async () => {
   try {
@@ -718,10 +719,11 @@ const enviarNotificacionTelegram = async (peticion, respuesta) => {
   }
 };
 
-// Reporte detallado de reservas para exportar
 const obtenerReporteReservas = async (peticion, respuesta) => {
+  const { estado, busqueda, fecha_inicio, fecha_fin, origen } = peticion.query;
+  
   try {
-    const consultaSQL = `
+    let consultaSQL = `
       SELECT 
         r.codigo_reserva AS clave,
         h.id_huesped,
@@ -734,22 +736,171 @@ const obtenerReporteReservas = async (peticion, respuesta) => {
         r.fecha_checkout,
         r.cantidad_huespedes,
         r.estado,
-        r.monto_pagado
+        r.monto_pagado,
+        CASE WHEN r.id_telegram IS NOT NULL THEN 'TELEGRAM' ELSE 'SISTEMA' END AS origen
       FROM reserva r
       JOIN huesped h ON r.id_huesped = h.id_huesped
       JOIN habitacion hab ON r.codigo_habitacion = hab.codigo_habitacion
       JOIN tipo_habitacion th ON hab.id_tipo_habitacion = th.id_tipo_habitacion
-      ORDER BY r.codigo_reserva DESC;
+      WHERE 1=1
     `;
+    
+    const valores = [];
+    let contadorParametros = 1;
 
-    const resultado = await conexion.query(consultaSQL);
+    if (estado && estado !== 'TODAS') {
+      consultaSQL += ` AND r.estado = $${contadorParametros}`;
+      valores.push(estado);
+      contadorParametros++;
+    }
+
+    if (origen && origen !== 'TODAS') {
+      if (origen === 'TELEGRAM') {
+        consultaSQL += ` AND r.id_telegram IS NOT NULL`;
+      } else {
+        consultaSQL += ` AND r.id_telegram IS NULL`;
+      }
+    }
+
+    if (busqueda && busqueda.trim() !== '') {
+      consultaSQL += ` AND (h.nombre ILIKE $${contadorParametros} OR r.codigo_reserva::text ILIKE $${contadorParametros} OR r.codigo_habitacion::text ILIKE $${contadorParametros})`;
+      valores.push(`%${busqueda.trim()}%`);
+      contadorParametros++;
+    }
+
+    if (fecha_inicio) {
+      consultaSQL += ` AND r.fecha_checkin >= $${contadorParametros}`;
+      valores.push(fecha_inicio);
+      contadorParametros++;
+    }
+
+    if (fecha_fin) {
+      consultaSQL += ` AND r.fecha_checkout <= $${contadorParametros}`;
+      valores.push(fecha_fin);
+      contadorParametros++;
+    }
+
+    consultaSQL += ` ORDER BY r.codigo_reserva DESC;`;
+
+    const resultado = await conexion.query(consultaSQL, valores);
     return respuesta.status(200).json(resultado.rows);
   } catch (error) {
     console.error('Error al generar el reporte de reservas:', error);
-    return respuesta.status(500).json({ 
-      mensaje: 'Error al consultar los datos para el reporte de reservas.' 
+    return respuesta.status(500).json({ mensaje: 'Error al consultar los datos para el reporte de reservas.' });
+  }
+};
+
+const enviarReporteReservasCorreo = async (peticion, respuesta) => {
+  const { correo_destino, estado, busqueda, fecha_inicio, fecha_fin, origen } = peticion.body;
+
+  if (!correo_destino || !correo_destino.trim()) {
+    return respuesta.status(400).json({ mensaje: 'Debe especificar un correo electrónico de destino.' });
+  }
+
+  try {
+    let consultaSQL = `
+      SELECT 
+        r.codigo_reserva AS clave,
+        h.nombre AS nombre_huesped,
+        r.codigo_habitacion AS habitacion_asignada,
+        r.estado,
+        r.monto_pagado,
+        CASE WHEN r.id_telegram IS NOT NULL THEN 'TELEGRAM' ELSE 'SISTEMA' END AS origen
+      FROM reserva r
+      JOIN huesped h ON r.id_huesped = h.id_huesped
+      WHERE 1=1
+    `;
+    
+    const valores = [];
+    let contadorParametros = 1;
+
+    if (estado && estado !== 'TODAS') {
+      consultaSQL += ` AND r.estado = $${contadorParametros}`;
+      valores.push(estado);
+      contadorParametros++;
+    }
+
+    if (origen && origen !== 'TODAS') {
+      if (origen === 'TELEGRAM') {
+        consultaSQL += ` AND r.id_telegram IS NOT NULL`;
+      } else {
+        consultaSQL += ` AND r.id_telegram IS NULL`;
+      }
+    }
+
+    if (busqueda && busqueda.trim() !== '') {
+      consultaSQL += ` AND (h.nombre ILIKE $${contadorParametros} OR r.codigo_reserva::text ILIKE $${contadorParametros})`;
+      valores.push(`%${busqueda.trim()}%`);
+      contadorParametros++;
+    }
+
+    if (fecha_inicio) {
+      consultaSQL += ` AND r.fecha_checkin >= $${contadorParametros}`;
+      valores.push(fecha_inicio);
+      contadorParametros++;
+    }
+
+    if (fecha_fin) {
+      consultaSQL += ` AND r.fecha_checkout <= $${contadorParametros}`;
+      valores.push(fecha_fin);
+      contadorParametros++;
+    }
+
+    consultaSQL += ` ORDER BY r.codigo_reserva DESC;`;
+    const resultado = await conexion.query(consultaSQL, valores);
+    const registros = resultado.rows;
+
+    const filasTablaHTML = registros.map(r => `
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="padding: 10px 8px; font-size: 12px; color: #334155; width: 15%;">#${r.clave}</td>
+        <td style="padding: 10px 8px; font-size: 12px; color: #0f172a; font-weight: 600; width: 30%;">${r.nombre_huesped}</td>
+        <td style="padding: 10px 8px; font-size: 12px; color: #64748b; width: 15%;">Hab. ${r.habitacion_asignada}</td>
+        <td style="padding: 10px 8px; font-size: 12px; color: #2563eb; font-weight: 600; width: 15%;">${r.origen}</td>
+        <td style="padding: 10px 8px; font-size: 12px; color: #0f172a; width: 25%; text-align: right;">$${parseFloat(r.monto_pagado || 0).toFixed(2)}</td>
+      </tr>
+    `).join('');
+
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER || 'inorygranda@gmail.com',
+        pass: process.env.EMAIL_PASS || 'jael cwdx lyfe vivl'
+      }
     });
-    } // <--- 1. Cierra el bloque catch
+
+    const htmlContenido = `
+      <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 24px; font-family: sans-serif; color: #1e293b; font-size: 13px; border: 1px solid #e2e8f0; border-radius: 8px;">
+        <h2 style="font-size: 16px; font-weight: 700; color: #0f172a; text-transform: uppercase;">Informe Gerencial de Reservas</h2>
+        <p>Reporte consolidado de reservas filtrado por canal.</p>
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="border-bottom: 2px solid #cbd5e1; text-align: left;">
+              <th style="padding: 8px;">Clave</th>
+              <th style="padding: 8px;">Huésped</th>
+              <th style="padding: 8px;">Hab.</th>
+              <th style="padding: 8px;">Origen</th>
+              <th style="padding: 8px; text-align: right;">Monto</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filasTablaHTML}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    await transporter.sendMail({
+      from: '"Sistema Hotelero IUJO" <no-reply@hotel.com>',
+      to: correo_destino,
+      subject: `Informe Gerencial de Reservas - ${new Date().toLocaleDateString()}`,
+      html: htmlContenido
+    });
+
+    return respuesta.status(200).json({ mensaje: 'Reporte enviado por correo exitosamente.' });
+  } catch (error) {
+    console.error('Error al enviar correo de reservas:', error);
+    return respuesta.status(500).json({ mensaje: 'Error al intentar despachar el correo electrónico.' });
+  }
 };
 
 const realizarCheckinReserva = async (peticion, respuesta) => {
@@ -816,6 +967,7 @@ const realizarCheckinReserva = async (peticion, respuesta) => {
     cliente.release();
   }
 };
+
 module.exports = {
   obtenerReservas,
   obtenerReservaPorId,
@@ -827,5 +979,6 @@ module.exports = {
   crearReservaTelegram,
   enviarNotificacionTelegram,
   obtenerReporteReservas,
+  enviarReporteReservasCorreo, 
   realizarCheckinReserva
 };

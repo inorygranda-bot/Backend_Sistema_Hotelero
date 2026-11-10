@@ -48,6 +48,44 @@ const obtenerTarifas = async (peticion, respuesta) => {
   }
 };
 
+const enviarReporteTarifasCorreo = async (peticion, respuesta) => {
+  const { correo_destino, estado, habitacion, temporada, busqueda } = peticion.body;
+  if (!correo_destino || !correo_destino.trim()) {
+    return respuesta.status(400).json({ mensaje: 'Debe especificar un correo electrónico de destino.' });
+  }
+
+  try {
+    const resultado = await conexion.query('SELECT t.*, thab.nombre_tipo AS nombre_habitacion FROM tarifa t LEFT JOIN tarifa_hab th ON t.id_tarifa = th.id_tarifa LEFT JOIN tipo_habitacion thab ON th.id_tipo_hab = thab.id_tipo_habitacion');
+    const registros = resultado.rows;
+
+    const filasTablaHTML = registros.map(r => `
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="padding: 10px; font-size: 12px; color: #334155;">#TAR-${r.id_tarifa}</td>
+        <td style="padding: 10px; font-size: 12px; font-weight: 600;">${r.nombre_tarifa}</td>
+        <td style="padding: 10px; font-size: 12px; color: #2563eb; font-weight: 600;">$${parseFloat(r.precio_base || 0).toFixed(2)}</td>
+      </tr>
+    `).join('');
+
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.EMAIL_USER || 'inorygranda@gmail.com', pass: process.env.EMAIL_PASS || 'jael cwdx lyfe vivl' }
+    });
+
+    await transporter.sendMail({
+      from: '"Sistema Hotelero IUJO" <no-reply@hotel.com>',
+      to: correo_destino,
+      subject: `Informe Comercial de Tarifas - ${new Date().toLocaleDateString()}`,
+      html: `<div style="max-width: 600px; margin: 0 auto; padding: 24px; font-family: sans-serif;"><h2>Informe Comercial de Tarifas</h2><table style="width:100%; border-collapse:collapse;">${filasTablaHTML}</table></div>`
+    });
+
+    return respuesta.status(200).json({ mensaje: 'Reporte de tarifas enviado por correo exitosamente.' });
+  } catch (error) {
+    console.error('Error al enviar correo:', error);
+    return respuesta.status(500).json({ mensaje: 'Error al despachar el correo electrónico.' });
+  }
+};
+
 // 2. Obtener una tarifa por su ID
 const obtenerTarifaPorId = async (peticion, respuesta) => {
   const { id } = peticion.params;
@@ -636,5 +674,6 @@ module.exports = {
   actualizarTarifa,
   eliminarTarifa,
   duplicarTarifa,
+  enviarReporteTarifasCorreo,
   obtenerTasaBCV
 };
